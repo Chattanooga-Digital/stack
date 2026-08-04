@@ -1,0 +1,199 @@
+x-db-env: &db-env
+  DB_HOST: db
+  # Dedicated instance per stack; root == full ownership, no grant script needed
+  DB_USER: root
+  DB_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD not set}
+  DB_CHARSET: ${DB_CHARSET:-utf8}
+  SYSTEM_DB_NAME: ${SYSTEM_DB_NAME:-bigcapital_system}
+  # Upstream really does spell it PERFIX.
+  TENANT_DB_NAME_PERFIX: ${TENANT_DB_PREFIX:-bigcapital_tenant_}
+
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config:
+    order: stop-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: any
+    delay: 10s
+    max_attempts: 0
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  bigcapital_internal:
+    driver: overlay
+    attachable: false
+
+volumes:
+  bigcapital_db:
+    driver: local
+  bigcapital_redis:
+    driver: local
+
+services:
+  db:
+    image: mariadb:${MARIADB_VERSION:-10.11}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD not set}
+      MYSQL_DATABASE: ${SYSTEM_DB_NAME:-bigcapital_system}
+    volumes:
+      - bigcapital_db:/var/lib/mysql
+    networks:
+      - bigcapital_internal
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-512M}
+
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    command: redis-server
+    volumes:
+      - bigcapital_redis:/data
+    networks:
+      - bigcapital_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_REDIS:-128M}
+
+  # PDF rendering (invoices, financial reports) via headless Chromium.
+  gotenberg:
+    image: gotenberg/gotenberg:${GOTENBERG_VERSION:-7}
+    networks:
+      - bigcapital_internal
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          # Chromium-based; bump to 1G if PDF exports OOM.
+          memory: ${MEM_LIMIT_GOTENBERG:-512M}
+
+  # Backend API. Serves under /api, which Traefik routes here unstripped.
+  server:
+    image: bigcapitalhq/server:${BIGCAPITAL_VERSION:?BIGCAPITAL_VERSION not set}
+    environment:
+      <<: *db-env
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QUEUE_HOST: redis
+      QUEUE_PORT: 6379
+      BASE_URL: https://${BIGCAPITAL_DOMAIN:?BIGCAPITAL_DOMAIN not set}
+      APP_JWT_SECRET: ${APP_JWT_SECRET:?APP_JWT_SECRET not set}
+      SIGNUP_DISABLED: ${SIGNUP_DISABLED:-false}
+      SIGNUP_EMAIL_CONFIRMATION: ${SIGNUP_EMAIL_CONFIRMATION:-false}
+      SIGNUP_ALLOWED_DOMAINS: ${SIGNUP_ALLOWED_DOMAINS:-}
+      SIGNUP_ALLOWED_EMAILS: ${SIGNUP_ALLOWED_EMAILS:-}
+      MAIL_HOST: ${MAIL_HOST:?MAIL_HOST not set}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_SECURE: ${MAIL_SECURE:-false}
+      MAIL_USERNAME: ${MAIL_USERNAME:?MAIL_USERNAME not set}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:?MAIL_PASSWORD not set}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:?MAIL_FROM_NAME not set}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:?MAIL_FROM_ADDRESS not set}
+      # gotenberg:7 listens on 3000
+      GOTENBERG_URL: http://gotenberg:3000
+      GOTENBERG_DOCS_URL: http://server:3000/public/
+      EXCHANGE_RATE_SERVICE: ${EXCHANGE_RATE_SERVICE:-open-exchange-rate}
+      OPEN_EXCHANGE_RATE_APP_ID: ${OPEN_EXCHANGE_RATE_APP_ID:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:?S3_ENDPOINT not set}
+      S3_BUCKET: ${S3_BUCKET:?S3_BUCKET not set}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID not set}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY not set}
+    networks:
+      - traefik_net
+      - bigcapital_internal
+    depends_on:
+      - db
+      - redis
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_SERVER:-1G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-api.rule=Host(`${BIGCAPITAL_DOMAIN}`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-api.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-api.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.routers.${INSTANCE_NAME}-api.priority=20"
+        - "traefik.http.services.${INSTANCE_NAME}-api.loadbalancer.server.port=3000"
+        # Attachment/receipt upload headroom
+        - "traefik.http.middlewares.${INSTANCE_NAME}-upload.buffering.maxRequestBodyBytes=${UPLOAD_MAX_BYTES:-10485760}"
+        - "traefik.http.routers.${INSTANCE_NAME}-api.middlewares=${INSTANCE_NAME}-upload@swarm"
+
+  # Static frontend. Catch-all router (lower priority than /api).
+  webapp:
+    image: bigcapitalhq/webapp:${BIGCAPITAL_VERSION:?BIGCAPITAL_VERSION not set}
+    networks:
+      - traefik_net
+      - bigcapital_internal
+    depends_on:
+      - server
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WEBAPP:-128M}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-web.rule=Host(`${BIGCAPITAL_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.priority=10"
+        - "traefik.http.services.${INSTANCE_NAME}-web.loadbalancer.server.port=80"
+
+  # One-shot: runs system + tenant migrations, then exits and stays down.
+  # Replaces upstream's locally-built migration image (which just wraps this CLI).
+  # Re-run after image upgrades: docker service update --force <stack>_migration
+  migration:
+    image: bigcapitalhq/server:${BIGCAPITAL_VERSION:?BIGCAPITAL_VERSION not set}
+    working_dir: /app/packages/server
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 30); do nc -z db 3306 && break; echo "waiting for db..."; sleep 2; done
+        node dist/cli.js system:migrate:latest && node dist/cli.js tenants:migrate:latest
+    environment: *db-env
+    networks:
+      - bigcapital_internal
+    depends_on:
+      - db
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: none
+      placement:
+        constraints:
+          - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_MIGRATION:-512M}

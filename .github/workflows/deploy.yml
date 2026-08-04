@@ -1,0 +1,84 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ['stacks/**']
+  workflow_dispatch:
+    inputs:
+      stacks:
+        description: Space-separated stack names, or "all"
+        required: true
+        default: all
+
+jobs:
+  changed:
+    runs-on: ubuntu-latest
+    outputs:
+      stacks: ${{ steps.detect.outputs.stacks }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.stacks }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if [ "$REQUESTED" = all ]; then
+              names=$(cd stacks && ls -1d */ | tr -d /)
+            else
+              names=$(printf '%s\n' $REQUESTED)
+            fi
+          else
+            base="$BEFORE"
+            if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              base=$(git rev-parse "$SHA^" 2>/dev/null || echo "$SHA")
+            fi
+            names=$(git diff --name-only "$base" "$SHA" -- stacks/ | cut -d/ -f2 | sort -u)
+          fi
+
+          json=$(printf '%s\n' $names | while read -r name; do
+            [ -n "$name" ] && [ -d "stacks/$name" ] && echo "$name"
+          done | jq -Rsc 'split("\n") | map(select(length > 0))')
+
+          echo "stacks=$json" >> "$GITHUB_OUTPUT"
+          echo "deploying: $json" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: changed
+    if: needs.changed.outputs.stacks != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.changed.outputs.stacks) }}
+    steps:
+      # Secret names cannot be interpolated in the secrets context, so the whole
+      # context is passed in and looked up by the stack's derived name.
+      - env:
+          SECRETS: ${{ toJSON(secrets) }}
+          STACK: ${{ matrix.stack }}
+        run: |
+          set -euo pipefail
+
+          name="PORTAINER_WEBHOOK_$(printf '%s' "$STACK" | tr 'a-z-' 'A-Z_')"
+          url=$(printf '%s' "$SECRETS" | jq -r --arg n "$name" '.[$n] // empty')
+
+          if [ -z "$url" ]; then
+            echo "::error::$STACK changed but secret $name is not set"
+            exit 1
+          fi
+
+          code=$(curl -sS -X POST -o /dev/null -w '%{http_code}' --max-time 300 "$url")
+          echo "$STACK webhook returned $code"
+          case "$code" in
+            2*) ;;
+            *) exit 1 ;;
+          esac
