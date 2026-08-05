@@ -1,0 +1,255 @@
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config:
+    order: stop-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: any
+    delay: 10s
+    max_attempts: 0
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+x-deploy-stateless: &deploy-stateless
+  replicas: 1
+  update_config:
+    order: start-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: any
+    delay: 10s
+    max_attempts: 0
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  nextcloud_internal:
+    driver: overlay
+    attachable: false
+
+volumes:
+  nextcloud_html:
+    driver: local
+  nextcloud_db:
+    driver: local
+
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION:-18}
+    environment:
+      POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
+      POSTGRES_USER: ${NC_DB_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${NC_DB_PASSWORD:?NC_DB_PASSWORD not set}
+    volumes:
+      # postgres:18 takes the volume one level up from 17 and earlier. Mounting
+      # /var/lib/postgresql/data against 18 fails at startup with pg_upgrade advice
+      # and no obvious error line. docker-library/postgres#37
+      - nextcloud_db:/var/lib/postgresql
+    networks:
+      - nextcloud_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NC_DB_USER:-nextcloud} -d ${NC_DB_NAME:-nextcloud}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-1G}
+
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    command: ["redis-server", "--requirepass", "${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}", "--save", "", "--appendonly", "no"]
+    environment:
+      NC_REDIS_PASSWORD: ${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}
+    networks:
+      - nextcloud_internal
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${NC_REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_REDIS:-256M}
+
+  app:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
+      POSTGRES_USER: ${NC_DB_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${NC_DB_PASSWORD:?NC_DB_PASSWORD not set}
+      REDIS_HOST: redis
+      REDIS_HOST_PASSWORD: ${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}
+      # Never "admin": the built-in account is disabled once this one exists.
+      NEXTCLOUD_ADMIN_USER: ${NC_ADMIN_USER:?NC_ADMIN_USER not set}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD not set}
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NC_DOMAIN:?NC_DOMAIN not set}
+      OVERWRITEHOST: ${NC_DOMAIN:?NC_DOMAIN not set}
+      OVERWRITEPROTOCOL: https
+      OVERWRITECLIURL: https://${NC_DOMAIN:?NC_DOMAIN not set}
+      TRUSTED_PROXIES: ${NC_TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      PHP_UPLOAD_LIMIT: ${NC_PHP_UPLOAD_LIMIT:-10G}
+      PHP_MEMORY_LIMIT: ${NC_PHP_MEMORY_LIMIT:-2048M}
+      # OBJECTSTORE_S3_* is honoured at first install only. Adopting object storage
+      # after a rebuild is a data migration, not a config change.
+    volumes:
+      - nextcloud_html:/var/www/html
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    depends_on:
+      - db
+      - redis
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_APP:-2G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-app.rule=Host(`${NC_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.priority=10"
+        - "traefik.http.services.${INSTANCE_NAME}-app.loadbalancer.server.port=80"
+        # CalDAV/CardDAV clients probe /.well-known before anything else.
+        - "traefik.http.middlewares.${INSTANCE_NAME}-dav.redirectregex.regex=https://(.*)/.well-known/(card|cal)dav"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-dav.redirectregex.replacement=https://$${1}/remote.php/dav/"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-dav.redirectregex.permanent=true"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-upload.buffering.maxRequestBodyBytes=${UPLOAD_MAX_BYTES:-10737418240}"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.middlewares=${INSTANCE_NAME}-dav@swarm,${INSTANCE_NAME}-upload@swarm"
+
+  # Must share app's image and webroot volume. Without it no background job runs
+  # and the admin overview shows a permanent cron warning.
+  cron:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    entrypoint: ["/cron.sh"]
+    volumes:
+      - nextcloud_html:/var/www/html
+    networks:
+      - nextcloud_internal
+    depends_on:
+      - app
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_CRON:-512M}
+
+  collabora:
+    image: collabora/code:${COLLABORA_VERSION:?COLLABORA_VERSION not set}
+    environment:
+      aliasgroup1: https://${NC_DOMAIN:?NC_DOMAIN not set}:443
+      server_name: ${NC_DOMAIN:?NC_DOMAIN not set}
+      dictionaries: ${COLLABORA_DICTIONARIES:-en_US}
+      extra_params: --o:ssl.enable=false --o:ssl.termination=true --o:logging.disable_server_audit=true --o:welcome.enable=false
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_COLLABORA:-2G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-office.rule=Host(`${NC_DOMAIN}`) && (PathPrefix(`/browser`) || PathPrefix(`/hosting`) || PathPrefix(`/cool`))"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.priority=100"
+        - "traefik.http.services.${INSTANCE_NAME}-office.loadbalancer.server.port=9980"
+
+  whiteboard:
+    image: ghcr.io/nextcloud-releases/whiteboard:${WHITEBOARD_VERSION:?WHITEBOARD_VERSION not set}
+    environment:
+      NEXTCLOUD_URL: https://${NC_DOMAIN:?NC_DOMAIN not set}
+      # Must equal the whiteboard app's jwt_secret_key. A mismatch does not fail the
+      # deploy; boards silently never connect.
+      JWT_SECRET_KEY: ${NC_JWT_SECRET:?NC_JWT_SECRET not set}
+      # Do NOT set STORAGE_STRATEGY=redis. The release build's Redis path exits with
+      # "TypeError: RedisStrategy.createRedisClient is not a function".
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WHITEBOARD:-512M}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-board.rule=Host(`${NC_DOMAIN}`) && PathPrefix(`/whiteboard`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-board.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-board.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-board.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.routers.${INSTANCE_NAME}-board.priority=100"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-board-strip.stripprefix.prefixes=/whiteboard"
+        - "traefik.http.routers.${INSTANCE_NAME}-board.middlewares=${INSTANCE_NAME}-board-strip@swarm"
+        - "traefik.http.services.${INSTANCE_NAME}-board.loadbalancer.server.port=3002"
+
+  # Talk high-performance backend: signaling on 8081, eturnal TURN on TALK_PORT.
+  # Needs 3478 TCP+UDP reachable and a DNS record for NC_TURN_DOMAIN.
+  #
+  # NC_RELAY_IP must be this environment's PUBLIC address. On an overlay the
+  # container's own IP is a private 10.x, and advertising that as the TURN relay
+  # makes ICE fail for every remote participant. Upstream ghcr.io/nextcloud-releases/aio-talk
+  # takes the address from `hostname -i` with no override, so it needs host
+  # networking to be correct here; TALK_IMAGE selects which one runs.
+  talk:
+    image: ${TALK_IMAGE:-strangewill/aio-talk-standalone:20260428}
+    init: true
+    ports:
+      - "${TALK_PORT:-3478}:${TALK_PORT:-3478}/tcp"
+      - "${TALK_PORT:-3478}:${TALK_PORT:-3478}/udp"
+    environment:
+      NC_DOMAIN: ${NC_DOMAIN:?NC_DOMAIN not set}
+      TALK_HOST: ${NC_TURN_DOMAIN:?NC_TURN_DOMAIN not set}
+      TALK_PORT: ${TALK_PORT:-3478}
+      RELAY_IP_V4: ${NC_RELAY_IP:?NC_RELAY_IP not set}
+      # Puts the container's own subnet back into eturnal's peer whitelist, which
+      # setting RELAY_IP_V4 displaces. Not an upstream variable.
+      EXTRA_WHITELIST_PEER: ${TALK_EXTRA_WHITELIST_PEER:-10.0.0.0/8}
+      TURN_SECRET: ${NC_TURN_SECRET:?NC_TURN_SECRET not set}
+      SIGNALING_SECRET: ${NC_SIGNALING_SECRET:?NC_SIGNALING_SECRET not set}
+      INTERNAL_SECRET: ${NC_INTERNAL_SECRET:?NC_INTERNAL_SECRET not set}
+      TZ: ${TZ:-America/New_York}
+      AIO_LOG_LEVEL: ${AIO_LOG_LEVEL:-info}
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_TALK:-1G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-talk.rule=Host(`${NC_TURN_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}-talk.loadbalancer.server.port=8081"
