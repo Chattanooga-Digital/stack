@@ -53,8 +53,9 @@ a distinct value. Volumes and networks do not need this: declare them unprefixed
 and Swarm namespaces them with the stack name, so `bigcapital_db` becomes
 `<stack>_bigcapital_db`.
 
-New stacks use unprefixed variable names. Nextcloud's `NC_` prefix predates this
-and is not worth churning.
+Variable names are unprefixed. Where a container demands a specific name, that
+is the key, not the variable: nextcloud's talk service reads `NC_DOMAIN`, fed
+from `${DOMAIN}`.
 
 ## Swarm wiring
 

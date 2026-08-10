@@ -1,0 +1,158 @@
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config:
+    order: stop-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: on-failure
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+x-db-env: &db-env
+  POSTGRES_DB: ${DB_NAME:-nextcloud}
+  POSTGRES_USER: ${DB_USER:-nextcloud}
+  POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  internal:
+    driver: overlay
+
+volumes:
+  nc_html: {}
+  db_data: {}
+
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION:-16}
+    networks: [internal]
+    environment: *db-env
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nextcloud}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-1G}
+
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    networks: [internal]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_REDIS:-256M}
+
+  nextcloud:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    networks: [traefik_net, internal]
+    depends_on: [db, redis]
+    volumes:
+      - nc_html:/var/www/html
+    environment:
+      <<: *db-env
+      POSTGRES_HOST: db
+      REDIS_HOST: redis
+      NEXTCLOUD_TRUSTED_DOMAINS: ${DOMAIN:?DOMAIN not set}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      OVERWRITEHOST: ${DOMAIN}
+      OVERWRITEPROTOCOL: https
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-2048M}
+      PHP_UPLOAD_LIMIT: ${PHP_UPLOAD_LIMIT:-10G}
+      OBJECTSTORE_S3_BUCKET: ${S3_BUCKET:?S3_BUCKET not set}
+      OBJECTSTORE_S3_HOST: ${S3_HOST:?S3_HOST not set}
+      OBJECTSTORE_S3_PORT: ${S3_PORT:-443}
+      OBJECTSTORE_S3_REGION: ${S3_REGION:-us-east-1}
+      OBJECTSTORE_S3_KEY: ${S3_KEY:?S3_KEY not set}
+      OBJECTSTORE_S3_SECRET: ${S3_SECRET:?S3_SECRET not set}
+      OBJECTSTORE_S3_SSL: ${S3_SSL:-true}
+      OBJECTSTORE_S3_USEPATH_STYLE: ${S3_USE_PATH_STYLE:-true}
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_APP:-4G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-app.rule=Host(`${DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}-app.loadbalancer.server.port=80"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-upload.buffering.maxRequestBodyBytes=${UPLOAD_MAX_BYTES:-10737418240}"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.middlewares=${INSTANCE_NAME}-upload@swarm"
+
+  cron:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    networks: [internal]
+    depends_on: [nextcloud]
+    volumes:
+      - nc_html:/var/www/html
+    entrypoint: ["/cron.sh"]
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_CRON:-2G}
+
+  talk:
+    image: strangewill/aio-talk-standalone:${TALK_VERSION:-20260428}
+    init: true
+    networks: [traefik_net, internal]
+    # Host-mode publish so TURN sees real client addresses, not the ingress SNAT.
+    ports:
+      - target: 3478
+        published: ${TURN_PORT:-3478}
+        protocol: tcp
+        mode: host
+      - target: 3478
+        published: ${TURN_PORT:-3478}
+        protocol: udp
+        mode: host
+    environment:
+      NC_DOMAIN: ${DOMAIN:?DOMAIN not set}
+      TALK_HOST: ${TURN_DOMAIN:?TURN_DOMAIN not set}
+      # Public address of the load balancer. Wrong value means media never
+      # reaches clients.
+      RELAY_IP_V4: ${RELAY_IP:?RELAY_IP not set}
+      EXTRA_WHITELIST_PEER: ${TALK_WHITELIST_PEER:-10.0.0.0/8}
+      TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
+      SIGNALING_SECRET: ${SIGNALING_SECRET:?SIGNALING_SECRET not set}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:?INTERNAL_SECRET not set}
+      TALK_PORT: ${TURN_PORT:-3478}
+      TZ: ${TZ:-America/New_York}
+      AIO_LOG_LEVEL: ${TALK_LOG_LEVEL:-info}
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_TALK:-1G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-talk.rule=Host(`${TURN_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}-talk.loadbalancer.server.port=8081"

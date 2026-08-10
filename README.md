@@ -10,7 +10,7 @@ its own image pins. Sharing a repo couples nothing about how fast they move.
 |---|---|
 | [bigcapital](stacks/bigcapital) | Accounting, multi-instance |
 | [mastodon](stacks/mastodon) | `toot.chattanooga.digital`, multi-instance |
-| [nextcloud](stacks/nextcloud) | Files, Talk, Office, groupware |
+| [nextcloud](stacks/nextcloud) | Files, Talk, groupware |
 
 Read [docs/CONVENTIONS.md](docs/CONVENTIONS.md) before adding a stack.
 
