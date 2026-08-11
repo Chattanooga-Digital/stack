@@ -105,7 +105,9 @@ services:
       OVERWRITEHOST: ${NC_DOMAIN:?NC_DOMAIN not set}
       OVERWRITEPROTOCOL: https
       OVERWRITECLIURL: https://${NC_DOMAIN:?NC_DOMAIN not set}
-      TRUSTED_PROXIES: ${NC_TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      # nextcloud/docker splits this value on spaces. Commas are retained as part
+      # of a single invalid proxy entry.
+      TRUSTED_PROXIES: ${NC_TRUSTED_PROXIES:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}
       PHP_UPLOAD_LIMIT: ${NC_PHP_UPLOAD_LIMIT:-10G}
       PHP_MEMORY_LIMIT: ${NC_PHP_MEMORY_LIMIT:-1024M}
       # OBJECTSTORE_S3_* is honoured at first install only. Adopting object storage
@@ -137,7 +139,9 @@ services:
         - "traefik.http.middlewares.${INSTANCE_NAME}-dav.redirectregex.replacement=https://$${1}/remote.php/dav/"
         - "traefik.http.middlewares.${INSTANCE_NAME}-dav.redirectregex.permanent=true"
         - "traefik.http.middlewares.${INSTANCE_NAME}-upload.buffering.maxRequestBodyBytes=${UPLOAD_MAX_BYTES:-10737418240}"
-        - "traefik.http.routers.${INSTANCE_NAME}-app.middlewares=${INSTANCE_NAME}-dav@swarm,${INSTANCE_NAME}-upload@swarm"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-security.headers.stsSeconds=15552000"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-security.headers.stsIncludeSubdomains=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-app.middlewares=${INSTANCE_NAME}-security@swarm,${INSTANCE_NAME}-dav@swarm,${INSTANCE_NAME}-upload@swarm"
 
   # Must share app's image and webroot volume. Without it no background job runs
   # and the admin overview shows a permanent cron warning.
@@ -179,6 +183,7 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-office.tls=true"
         - "traefik.http.routers.${INSTANCE_NAME}-office.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
         - "traefik.http.routers.${INSTANCE_NAME}-office.priority=100"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.middlewares=${INSTANCE_NAME}-security@swarm"
         - "traefik.http.services.${INSTANCE_NAME}-office.loadbalancer.server.port=9980"
 
   whiteboard:
@@ -207,5 +212,5 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-board.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
         - "traefik.http.routers.${INSTANCE_NAME}-board.priority=100"
         - "traefik.http.middlewares.${INSTANCE_NAME}-board-strip.stripprefix.prefixes=/whiteboard"
-        - "traefik.http.routers.${INSTANCE_NAME}-board.middlewares=${INSTANCE_NAME}-board-strip@swarm"
+        - "traefik.http.routers.${INSTANCE_NAME}-board.middlewares=${INSTANCE_NAME}-security@swarm,${INSTANCE_NAME}-board-strip@swarm"
         - "traefik.http.services.${INSTANCE_NAME}-board.loadbalancer.server.port=3002"
