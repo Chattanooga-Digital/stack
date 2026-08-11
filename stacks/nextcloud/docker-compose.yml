@@ -116,6 +116,34 @@ services:
         limits:
           memory: ${MEM_LIMIT_CRON:-2G}
 
+  collabora:
+    image: collabora/code:${COLLABORA_VERSION:?COLLABORA_VERSION not set}
+    networks: [traefik_net, internal]
+    # Jail creation per document. Scoped to this container: a renderer escape
+    # here reaches no Nextcloud data, credentials, or config.
+    cap_add: [MKNOD, SYS_ADMIN]
+    environment:
+      server_name: ${OFFICE_DOMAIN:?OFFICE_DOMAIN not set}
+      aliasgroup1: https://${DOMAIN}:443
+      username: ${COLLABORA_USERNAME:?COLLABORA_USERNAME not set}
+      password: ${COLLABORA_PASSWORD:?COLLABORA_PASSWORD not set}
+      dictionaries: ${COLLABORA_DICTIONARIES:-en_US}
+      # Traefik terminates TLS. Turning ssl.enable back on breaks the router.
+      extra_params: --o:ssl.enable=false --o:ssl.termination=true
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_COLLABORA:-2G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.rule=Host(`${OFFICE_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-office.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}-office.loadbalancer.server.port=9980"
+
   talk:
     image: strangewill/aio-talk-standalone:${TALK_VERSION:-20260428}
     init: true
