@@ -8,11 +8,14 @@ its own image pins. Sharing a repo couples nothing about how fast they move.
 
 | Stack | Service |
 |---|---|
-| [bigcapital](stacks/bigcapital) | Accounting, multi-instance |
-| [mastodon](stacks/mastodon) | `toot.chattanooga.digital`, multi-instance |
+| [bigcapital](stacks/bigcapital) | Accounting |
+| [mastodon](stacks/mastodon) | Fediverse social |
 | [nextcloud](stacks/nextcloud) | Files, Talk, groupware |
 
-Read [docs/CONVENTIONS.md](docs/CONVENTIONS.md) before adding a stack.
+Each stack's README covers what is specific to it. Read
+[docs/CONVENTIONS.md](docs/CONVENTIONS.md) before adding one, and
+[docs/PORTFOLIO.md](docs/PORTFOLIO.md) for where a platform stands, including the
+ones not deployed from here.
 
 ## Adding a stack
 
