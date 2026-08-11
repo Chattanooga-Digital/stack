@@ -107,7 +107,7 @@ services:
       OVERWRITECLIURL: https://${NC_DOMAIN:?NC_DOMAIN not set}
       TRUSTED_PROXIES: ${NC_TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       PHP_UPLOAD_LIMIT: ${NC_PHP_UPLOAD_LIMIT:-10G}
-      PHP_MEMORY_LIMIT: ${NC_PHP_MEMORY_LIMIT:-2048M}
+      PHP_MEMORY_LIMIT: ${NC_PHP_MEMORY_LIMIT:-1024M}
       # OBJECTSTORE_S3_* is honoured at first install only. Adopting object storage
       # after a rebuild is a data migration, not a config change.
     volumes:
@@ -119,7 +119,7 @@ services:
       - db
       - redis
     deploy:
-      <<: *deploy-stateless
+      <<: *deploy-defaults
       resources:
         limits:
           memory: ${MEM_LIMIT_APP:-2G}
@@ -209,47 +209,3 @@ services:
         - "traefik.http.middlewares.${INSTANCE_NAME}-board-strip.stripprefix.prefixes=/whiteboard"
         - "traefik.http.routers.${INSTANCE_NAME}-board.middlewares=${INSTANCE_NAME}-board-strip@swarm"
         - "traefik.http.services.${INSTANCE_NAME}-board.loadbalancer.server.port=3002"
-
-  # Talk high-performance backend: signaling on 8081, eturnal TURN on TALK_PORT.
-  # Needs 3478 TCP+UDP reachable and a DNS record for NC_TURN_DOMAIN.
-  #
-  # NC_RELAY_IP must be this environment's PUBLIC address. On an overlay the
-  # container's own IP is a private 10.x, and advertising that as the TURN relay
-  # makes ICE fail for every remote participant. Upstream ghcr.io/nextcloud-releases/aio-talk
-  # takes the address from `hostname -i` with no override, so it needs host
-  # networking to be correct here; TALK_IMAGE selects which one runs.
-  talk:
-    image: ${TALK_IMAGE:-strangewill/aio-talk-standalone:20260428}
-    init: true
-    ports:
-      - "${TALK_PORT:-3478}:${TALK_PORT:-3478}/tcp"
-      - "${TALK_PORT:-3478}:${TALK_PORT:-3478}/udp"
-    environment:
-      NC_DOMAIN: ${NC_DOMAIN:?NC_DOMAIN not set}
-      TALK_HOST: ${NC_TURN_DOMAIN:?NC_TURN_DOMAIN not set}
-      TALK_PORT: ${TALK_PORT:-3478}
-      RELAY_IP_V4: ${NC_RELAY_IP:?NC_RELAY_IP not set}
-      # Puts the container's own subnet back into eturnal's peer whitelist, which
-      # setting RELAY_IP_V4 displaces. Not an upstream variable.
-      EXTRA_WHITELIST_PEER: ${TALK_EXTRA_WHITELIST_PEER:-10.0.0.0/8}
-      TURN_SECRET: ${NC_TURN_SECRET:?NC_TURN_SECRET not set}
-      SIGNALING_SECRET: ${NC_SIGNALING_SECRET:?NC_SIGNALING_SECRET not set}
-      INTERNAL_SECRET: ${NC_INTERNAL_SECRET:?NC_INTERNAL_SECRET not set}
-      TZ: ${TZ:-America/New_York}
-      AIO_LOG_LEVEL: ${AIO_LOG_LEVEL:-info}
-    networks:
-      - traefik_net
-      - nextcloud_internal
-    deploy:
-      <<: *deploy-stateless
-      resources:
-        limits:
-          memory: ${MEM_LIMIT_TALK:-1G}
-      labels:
-        - "traefik.enable=true"
-        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
-        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-talk.rule=Host(`${NC_TURN_DOMAIN}`)"
-        - "traefik.http.routers.${INSTANCE_NAME}-talk.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
-        - "traefik.http.routers.${INSTANCE_NAME}-talk.tls=true"
-        - "traefik.http.routers.${INSTANCE_NAME}-talk.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
-        - "traefik.http.services.${INSTANCE_NAME}-talk.loadbalancer.server.port=8081"
