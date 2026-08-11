@@ -22,6 +22,10 @@ because the app's rule matches the whole host:
 Office and Whiteboard are path-routed on the main hostname rather than given their
 own subdomains, so neither needs a DNS record.
 
+Set `NC_TRUSTED_PROXIES` to the actual Traefik overlay subnet. The Nextcloud image
+expects a space-separated value. Don't trust every private address range on a shared
+host: any trusted peer can supply forwarded client-IP headers.
+
 ## Talk
 
 Talk isn't part of this stack. Port 3478 is already reserved cluster-wide by another

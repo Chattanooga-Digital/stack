@@ -105,9 +105,9 @@ services:
       OVERWRITEHOST: ${NC_DOMAIN:?NC_DOMAIN not set}
       OVERWRITEPROTOCOL: https
       OVERWRITECLIURL: https://${NC_DOMAIN:?NC_DOMAIN not set}
-      # nextcloud/docker splits this value on spaces. Commas are retained as part
-      # of a single invalid proxy entry.
-      TRUSTED_PROXIES: ${NC_TRUSTED_PROXIES:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}
+      # nextcloud/docker splits this value on spaces. Set this to the proxy
+      # overlay subnet, not every RFC1918 range, on a shared host.
+      TRUSTED_PROXIES: ${NC_TRUSTED_PROXIES:?NC_TRUSTED_PROXIES not set}
       PHP_UPLOAD_LIMIT: ${NC_PHP_UPLOAD_LIMIT:-10G}
       PHP_MEMORY_LIMIT: ${NC_PHP_MEMORY_LIMIT:-1024M}
       # OBJECTSTORE_S3_* is honoured at first install only. Adopting object storage
