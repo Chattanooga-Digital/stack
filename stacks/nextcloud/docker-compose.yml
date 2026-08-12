@@ -217,12 +217,18 @@ services:
 
   # Talk: signaling (HPB) + janus + nats + eturnal TURN, in one image.
   #
-  # THE PUBLISHED PORT IS NOT 3478 AND THAT IS DELIBERATE. On a cluster where
-  # another tenant already publishes 3478 in ingress mode, the port is reserved
-  # cluster-wide and this service simply cannot bind it — Swarm reserves the
-  # published port across every node and stack, not per service. Rather than
-  # touch the other tenant's service, publish a different host port and tell the
-  # container about it via TALK_PORT.
+  # THIS SERVICE PUBLISHES NO PORT, AND THAT IS THE POINT. It runs only as the
+  # signaling server (HPB), reached through Traefik on the hostname below. The
+  # STUN/TURN relay is SHARED — Chattanooga.Digital and Eduity both use the one
+  # on 3478, which is what it was stood up for. Do not add a `ports:` block here
+  # to give this stack a relay of its own: a second relay is redundant, and on
+  # this cluster it cannot bind 3478 anyway because an ingress publish reserves
+  # the port across every node and stack.
+  #
+  # Signaling is the half that CANNOT be shared today. The image bundles
+  # signaling + janus + eturnal, and the signaling server is bound to a single
+  # Nextcloud backend via NC_DOMAIN, so each site needs its own until that is
+  # split out. TURN shares trivially; signaling does not.
   #
   # TALK_PORT sets BOTH what eturnal binds inside the container AND what the
   # server advertises to clients. It is not just an advertisement, so the
@@ -257,21 +263,6 @@ services:
       INTERNAL_SECRET: ${TALK_INTERNAL_SECRET:?TALK_INTERNAL_SECRET not set}
       AIO_LOG_LEVEL: ${TALK_LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
-    ports:
-      # target MUST equal published. TALK_PORT does not merely advertise the
-      # port, it is what eturnal BINDS inside the container — verified on prod
-      # 2026-08-12, where TALK_PORT=3479 with target:3478 left eturnal on
-      # :::3479 while Swarm forwarded host 3479 to container 3478, so every
-      # STUN packet was delivered to a port nothing listened on. The service
-      # reported running and TCP answered REFUSED. Keep these three in lockstep.
-      - target: ${TALK_PUBLISHED_PORT:-3478}
-        published: ${TALK_PUBLISHED_PORT:-3478}
-        protocol: tcp
-        mode: ingress
-      - target: ${TALK_PUBLISHED_PORT:-3478}
-        published: ${TALK_PUBLISHED_PORT:-3478}
-        protocol: udp
-        mode: ingress
     networks:
       - traefik_net
       - nextcloud_internal
