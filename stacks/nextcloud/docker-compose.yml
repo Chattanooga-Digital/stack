@@ -214,3 +214,71 @@ services:
         - "traefik.http.middlewares.${INSTANCE_NAME}-board-strip.stripprefix.prefixes=/whiteboard"
         - "traefik.http.routers.${INSTANCE_NAME}-board.middlewares=${INSTANCE_NAME}-security@swarm,${INSTANCE_NAME}-board-strip@swarm"
         - "traefik.http.services.${INSTANCE_NAME}-board.loadbalancer.server.port=3002"
+
+  # Talk: signaling (HPB) + janus + nats + eturnal TURN, in one image.
+  #
+  # THE PUBLISHED PORT IS NOT 3478 AND THAT IS DELIBERATE. On a cluster where
+  # another tenant already publishes 3478 in ingress mode, the port is reserved
+  # cluster-wide and this service simply cannot bind it — Swarm reserves the
+  # published port across every node and stack, not per service. Rather than
+  # touch the other tenant's service, publish a different host port and tell the
+  # container about it via TALK_PORT.
+  #
+  # TALK_PORT MUST MATCH THE PUBLISHED (host) PORT, not the container port. It is
+  # what the server advertises to clients as the relay address, so if it says
+  # 3478 while the host publishes 3479, every client is handed an address nothing
+  # is listening on, the service still looks healthy, and calls connect with no
+  # media. Container-side stays 3478 because the image hardcodes it.
+  #
+  # RELAY_IP_V4 is required under ingress publishing. Ingress SNATs through the
+  # overlay, so the relay sees 10.0.0.x instead of the real client address — a
+  # STUN binding request against a working ingress-published TURN returns a
+  # reflexive address of 10.0.0.2, which is useless as a relay candidate. The
+  # strangewill fork exists precisely to allow overriding it; upstream
+  # nextcloud/aio-talk derives it from `hostname -i` and cannot be corrected.
+  #
+  # Secrets are environment values here, and only here. The image reads
+  # TURN_SECRET / SIGNALING_SECRET / INTERNAL_SECRET from the environment only —
+  # verified in its /start.sh, whose sole *_FILE variable is SSL_CERT_FILE — so
+  # there is no _FILE form to point at /run/secrets. The usual workaround is an
+  # entrypoint wrapper, but Swarm ignores entrypoint overrides in stack deploys.
+  # Every other credential in this stack should move to Swarm secrets; this one
+  # cannot until the image supports it.
+  talk:
+    image: ${TALK_IMAGE:-strangewill/aio-talk-standalone}:${TALK_VERSION:-20260428}
+    environment:
+      NC_DOMAIN: ${NC_DOMAIN:?NC_DOMAIN not set}
+      TALK_HOST: ${TALK_HOST:?TALK_HOST not set}
+      TALK_PORT: ${TALK_PUBLISHED_PORT:-3478}
+      RELAY_IP_V4: ${TALK_RELAY_IP:?TALK_RELAY_IP not set}
+      EXTRA_WHITELIST_PEER: ${TALK_WHITELIST_PEER:-10.0.0.0/8}
+      TURN_SECRET: ${TALK_TURN_SECRET:?TALK_TURN_SECRET not set}
+      SIGNALING_SECRET: ${TALK_SIGNALING_SECRET:?TALK_SIGNALING_SECRET not set}
+      INTERNAL_SECRET: ${TALK_INTERNAL_SECRET:?TALK_INTERNAL_SECRET not set}
+      AIO_LOG_LEVEL: ${TALK_LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    ports:
+      - target: 3478
+        published: ${TALK_PUBLISHED_PORT:-3478}
+        protocol: tcp
+        mode: ingress
+      - target: 3478
+        published: ${TALK_PUBLISHED_PORT:-3478}
+        protocol: udp
+        mode: ingress
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_TALK:-1G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-talk.rule=Host(`${TALK_HOST}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-talk.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}-talk.loadbalancer.server.port=8081"
