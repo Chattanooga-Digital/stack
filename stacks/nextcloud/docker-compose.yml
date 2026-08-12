@@ -224,11 +224,11 @@ services:
   # touch the other tenant's service, publish a different host port and tell the
   # container about it via TALK_PORT.
   #
-  # TALK_PORT MUST MATCH THE PUBLISHED (host) PORT, not the container port. It is
-  # what the server advertises to clients as the relay address, so if it says
-  # 3478 while the host publishes 3479, every client is handed an address nothing
-  # is listening on, the service still looks healthy, and calls connect with no
-  # media. Container-side stays 3478 because the image hardcodes it.
+  # TALK_PORT sets BOTH what eturnal binds inside the container AND what the
+  # server advertises to clients. It is not just an advertisement, so the
+  # published port, the target port and TALK_PORT must all be the same number.
+  # Get it wrong and the service still reports running while every STUN packet
+  # lands on a port nothing listens on — calls connect and carry no media.
   #
   # RELAY_IP_V4 is required under ingress publishing. Ingress SNATs through the
   # overlay, so the relay sees 10.0.0.x instead of the real client address — a
@@ -258,11 +258,17 @@ services:
       AIO_LOG_LEVEL: ${TALK_LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
     ports:
-      - target: 3478
+      # target MUST equal published. TALK_PORT does not merely advertise the
+      # port, it is what eturnal BINDS inside the container — verified on prod
+      # 2026-08-12, where TALK_PORT=3479 with target:3478 left eturnal on
+      # :::3479 while Swarm forwarded host 3479 to container 3478, so every
+      # STUN packet was delivered to a port nothing listened on. The service
+      # reported running and TCP answered REFUSED. Keep these three in lockstep.
+      - target: ${TALK_PUBLISHED_PORT:-3478}
         published: ${TALK_PUBLISHED_PORT:-3478}
         protocol: tcp
         mode: ingress
-      - target: 3478
+      - target: ${TALK_PUBLISHED_PORT:-3478}
         published: ${TALK_PUBLISHED_PORT:-3478}
         protocol: udp
         mode: ingress
