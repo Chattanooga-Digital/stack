@@ -28,6 +28,12 @@ volumes:
   nc_html: {}
   db_data: {}
 
+configs:
+  # Bump (v1 -> v2 -> ...) whenever talk-config.sh changes: Swarm configs are
+  # immutable, so a new name is how an updated script reaches the container.
+  talk_config_v1:
+    file: ./talk-config.sh
+
 services:
   db:
     image: postgres:${POSTGRES_VERSION:-16}
@@ -69,6 +75,12 @@ services:
     depends_on: [db, redis]
     volumes:
       - nc_html:/var/www/html
+    configs:
+      # Applies the Talk relay/signaling config on every container start via the
+      # official image's before-starting hook. See talk-config.sh.
+      - source: talk_config_v1
+        target: /docker-entrypoint-hooks.d/before-starting/10-talk-config.sh
+        mode: 0555
     environment:
       <<: *db-env
       POSTGRES_HOST: db
@@ -87,6 +99,15 @@ services:
       OBJECTSTORE_S3_SECRET: ${S3_SECRET:?S3_SECRET not set}
       OBJECTSTORE_S3_SSL: ${S3_SSL:-true}
       OBJECTSTORE_S3_USEPATH_STYLE: ${S3_USE_PATH_STYLE:-true}
+      # Talk (spreed) relay + signaling, re-applied on every deploy by the
+      # before-starting hook so staging and production converge instead of
+      # drifting from a hand-set database value. NC_TURN_* is the SHARED relay
+      # (identical across environments); TURN_DOMAIN is this instance's own
+      # signaling host.
+      NC_TURN_SERVER: ${NC_TURN_SERVER:?NC_TURN_SERVER not set}
+      NC_TURN_SECRET: ${NC_TURN_SECRET:?NC_TURN_SECRET not set}
+      TURN_DOMAIN: ${TURN_DOMAIN:?TURN_DOMAIN not set}
+      SIGNALING_SECRET: ${SIGNALING_SECRET:?SIGNALING_SECRET not set}
     deploy:
       <<: *deploy-defaults
       resources:
