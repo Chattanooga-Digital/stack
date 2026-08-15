@@ -1,6 +1,6 @@
 # Nextcloud
 
-Files, Office, and Whiteboard. Declarative — not
+Files, Office, Whiteboard, and Talk. Declarative — not
 [All-in-One](https://github.com/nextcloud/all-in-one). AIO's mastercontainer mounts
 the Docker socket, which on a shared host means anyone who can admin AIO can reach
 every other tenant's containers.
@@ -28,10 +28,25 @@ host: any trusted peer can supply forwarded client-IP headers.
 
 ## Talk
 
-Talk isn't part of this stack. Port 3478 is already reserved cluster-wide by another
-tenant, and the separate-listener, relay, and Traefik design isn't settled. Keep it
-out until [cd-nextcloud#8](https://github.com/TortoiseWolfe/cd-nextcloud/issues/8)
-passes its external-network acceptance test.
+One image bundling signaling (HPB), janus, nats and eturnal. **This stack runs the
+signaling half only**, routed by Traefik on `TALK_DOMAIN`, and publishes no port.
+
+The STUN/TURN relay is shared with the other tenant on 3478. Don't give this stack a
+relay of its own: an ingress publish reserves the port across every node and stack, so
+a second one cannot bind 3478 here, and the shared relay is what it was stood up for.
+Signaling is the half that can't be shared — the server binds to a single Nextcloud
+backend via `NC_DOMAIN`, so each site needs its own.
+
+Two limits worth knowing before anyone reports a call as broken:
+
+- The relay sees the overlay SNAT address, not the client's, so the reflexive
+  candidates it hands out are unusable and **every call goes through the relay**
+  rather than peer-to-peer.
+- The relay is offered as `turn` on 3478 only; `turns` on 5349 is not. A client
+  restricted to TLS/443 egress will not reach it.
+
+External-network acceptance is still outstanding:
+[cd-nextcloud#8](https://github.com/TortoiseWolfe/cd-nextcloud/issues/8).
 
 ## Secrets that are shared state
 
@@ -41,6 +56,8 @@ deploy; Whiteboard silently never connects:
 | Variable | Must equal |
 |---|---|
 | `NC_JWT_SECRET` | the whiteboard app's `jwt_secret_key` |
+| `TALK_SIGNALING_SECRET` | the `secret` Talk stores for this signaling server |
+| `TALK_TURN_SECRET` | the shared secret the relay on 3478 enforces |
 
 ## Notes
 
