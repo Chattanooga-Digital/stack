@@ -95,7 +95,6 @@ services:
       POSTGRES_PASSWORD: ${NC_DB_PASSWORD:?NC_DB_PASSWORD not set}
       REDIS_HOST: redis
       REDIS_HOST_PASSWORD: ${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}
-      # Never "admin": the built-in account is disabled once this one exists.
       NEXTCLOUD_ADMIN_USER: ${NC_ADMIN_USER:?NC_ADMIN_USER not set}
       NEXTCLOUD_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD not set}
       NEXTCLOUD_TRUSTED_DOMAINS: ${NC_DOMAIN:?NC_DOMAIN not set}
@@ -202,16 +201,10 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-board.middlewares=${INSTANCE_NAME}-security@swarm,${INSTANCE_NAME}-board-strip@swarm"
         - "traefik.http.services.${INSTANCE_NAME}-board.loadbalancer.server.port=3002"
 
-  # Signaling only. Publishes no port: do not add a `ports:` block. The STUN/TURN
-  # relay is shared with the other tenant on 3478, and an ingress publish would
-  # reserve that port across every node and stack.
-  #
-  # TALK_PORT is what eturnal binds AND what it advertises. If this service is ever
-  # published, the published port, the target port and TALK_PORT must be the same
-  # number, or calls connect and carry no media.
-  #
-  # TURN_SECRET / SIGNALING_SECRET / INTERNAL_SECRET are environment-only: the image
-  # has no _FILE form, and Swarm ignores the entrypoint override that would add one.
+  # Signaling only, and it must publish no port: an ingress publish reserves 3478
+  # across every node and stack, and the shared relay already holds it. TALK_PORT is
+  # both what eturnal binds and what it advertises, so if this is ever published the
+  # host port, target port and TALK_PORT must all be the same number.
   talk:
     image: ${TALK_IMAGE:-strangewill/aio-talk-standalone}:${TALK_VERSION:-20260428}
     environment:

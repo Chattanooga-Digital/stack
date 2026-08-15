@@ -10,7 +10,7 @@ its own image pins. Sharing a repo couples nothing about how fast they move.
 |---|---|
 | [bigcapital](stacks/bigcapital) | Accounting |
 | [mastodon](stacks/mastodon) | Fediverse social |
-| [nextcloud](stacks/nextcloud) | Files, Office, Whiteboard, groupware |
+| [nextcloud](stacks/nextcloud) | Files, Office, Whiteboard, Talk |
 
 Each stack's README covers what is specific to it. Read
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) before adding one, and
