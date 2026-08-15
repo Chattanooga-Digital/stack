@@ -1,9 +1,14 @@
 # Nextcloud
 
-Files, Office, Whiteboard and Talk. Declarative, not
-[All-in-One](https://github.com/nextcloud/all-in-one). AIO's mastercontainer mounts the
-Docker socket, so on a shared host anyone who can admin AIO can reach every other
+Nextcloud, plus the backend services that Office, Whiteboard and Talk each require.
+Declarative, not [All-in-One](https://github.com/nextcloud/all-in-one). AIO's mastercontainer
+mounts the Docker socket, so on a shared host anyone who can admin AIO can reach every other
 tenant's containers.
+
+**This stack deploys services, not apps.** Which Nextcloud apps are enabled — Calendar,
+Contacts, Mail and the rest — is a separate decision applied by `occ` after deploy, and a
+stack deploy does not run it. Deploying this gives you a Nextcloud with the Office, Whiteboard
+and Talk backends reachable; it does not enable them.
 
 Installs unattended from `NC_ADMIN_USER` / `NC_ADMIN_PASSWORD`; there is no web wizard
 step.
@@ -52,9 +57,9 @@ the feature silently never connects:
 
 ## Notes
 
-- **Primary storage is the local `nextcloud_html` volume.** `OBJECTSTORE_S3_*` is
-  honoured at first install only, so adopting object storage after a rebuild is a data
-  migration rather than a config change. Decide before an instance's first deploy.
+- **Primary storage is the local `nextcloud_html` volume.** Object storage is not configured
+  here: Nextcloud only honours it at first install, so it is an install-time decision rather
+  than something this file can carry.
 - `postgres:18` takes its volume at `/var/lib/postgresql`, one level up from 17 and
   earlier. Mounting the old `/data` path against 18 fails the container at startup with
   a wall of `pg_upgrade` advice and no obvious error line
