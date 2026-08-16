@@ -267,6 +267,33 @@ services:
         # permission, which has cost a day before.
         chmod 0755 "$$S"/*.sh
 
+        # Wait for Collabora to answer THROUGH Traefik on the public hostname before
+        # running apps.sh.
+        #
+        # apps.sh primes the WOPI discovery cache, and that call goes out to
+        # https://$$NC_DOMAIN rather than to collabora:9980 — deliberately, because the
+        # internal URL would need allow_local_remote_servers=true and that disables SSRF
+        # protection site-wide. So the prime cannot succeed until DNS, the certificate,
+        # the Traefik path rules and Collabora itself are ALL up.
+        #
+        # On a first deploy they are not. Measured on a clean stack 2026-08-16: the prime
+        # threw a Guzzle connection error, apps.sh warned, and the deploy otherwise looked
+        # entirely successful. The cost is that discovery is only ever fetched by a
+        # background job, so an empty cache stays empty and every attempt to open a
+        # document returns HTTP 500 naming neither cron nor discovery.
+        echo "init: waiting for Collabora discovery via https://$$NC_DOMAIN"
+        i=0
+        until [ "$$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+                    "https://$$NC_DOMAIN/hosting/discovery")" = "200" ]; do
+          i=$$((i + 1))
+          if [ $$i -gt 60 ]; then
+            echo "init: /hosting/discovery never answered. Office would 500 on every document open, so this is a failure, not a warning." >&2
+            exit 1
+          fi
+          sleep 10
+        done
+        echo "init: Collabora discovery is reachable"
+
         # Order matters. mail.sh first so SMTP exists before harden.sh sends
         # set-your-own-password links to the named admins.
         #
