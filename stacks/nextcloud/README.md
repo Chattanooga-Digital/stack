@@ -57,7 +57,28 @@ deploy; Whiteboard silently never connects:
   Redis storage only matters for sharing board state across replicas, and this runs one.
 - `cron` shares `app`'s image and webroot volume. Without it no background job runs at
   all and the admin overview shows a permanent cron warning.
-- Apps and post-install configuration (Office WOPI, whiteboard JWT, mail, hardening)
-  are applied by `occ` scripts that live outside this repo, in
-  [cd-nextcloud](https://github.com/TortoiseWolfe/cd-nextcloud). A stack deploy does not
-  run them.
+- **A stack deploy installs the apps.** The `init` service runs `scripts/mail.sh`,
+  `scripts/apps.sh` and `scripts/harden.sh` in that order, so deploying onto empty volumes
+  produces an instance with the app set, Office and whiteboard wired, outbound mail
+  configured and the named admins created, with no hand steps.
+
+  This used to read "applied by `occ` scripts that live outside this repo. A stack deploy
+  does not run them." That was accurate and it was the defect: the stack defined seven
+  containers and installed nothing, so what it produced was a stock Nextcloud, and the app
+  set arrived only when somebody ran a script from a different repo by hand.
+
+- `init` waits on two things before provisioning, and both were found by deploying from
+  empty rather than by reading the file. It polls `occ status` because Swarm ignores
+  `depends_on` ordering, and it polls `https://$NC_DOMAIN/hosting/discovery` because
+  `apps.sh` primes the WOPI cache through the **public** hostname — the internal URL would
+  need `allow_local_remote_servers=true`, which disables SSRF protection site-wide. On a
+  first deploy that fetch fails, the cache is only ever refilled by a background job, and
+  every attempt to open a document then returns HTTP 500 naming neither cron nor discovery.
+
+- `init` is **not** wrapped in `|| true`, and that is deliberate. It has
+  `restart_policy: on-failure` with `max_attempts: 6`, so a genuine failure stops and
+  reports instead of looping. A provisioning step that exits 0 on failure deploys an
+  unconfigured instance as a success.
+
+- The scripts run as `www-data`. Root-owned files under a webroot served by `www-data` are
+  an invisible 500, and a root CLI reports success the whole time it is creating them.
