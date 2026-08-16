@@ -46,7 +46,16 @@ volumes:
 
 services:
   db:
-    image: postgres:${POSTGRES_VERSION:-18}
+    # Digest-pinned, and the default carries the digest because nothing sets
+    # POSTGRES_VERSION in the stack env -- this default IS what production runs.
+    #
+    # `18` on its own is a floating tag, and under Swarm that reads safer than it is:
+    # the tag is resolved to a digest once at service-create and never re-resolved, so
+    # the running service looks pinned while the SOURCE is not. Measured 2026-08-16, the
+    # running service sits on 7157393f and `postgres:18` upstream now resolves to
+    # 06cad38a. The container in front of the data is fine; the next stack update of any
+    # kind is what quietly puts a different Postgres build under it.
+    image: postgres:${POSTGRES_VERSION:-18@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d}
     environment:
       POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
       POSTGRES_USER: ${NC_DB_USER:-nextcloud}
@@ -71,7 +80,12 @@ services:
           memory: ${MEM_LIMIT_DB:-1G}
 
   redis:
-    image: redis:${REDIS_VERSION:-7-alpine}
+    # Same treatment as db, and for the same reason: REDIS_VERSION is not set in the
+    # stack env either, so this default is what production runs. `7-alpine` has not
+    # drifted yet -- the running digest still matches what the tag resolves to today --
+    # but it carries exactly the same exposure as postgres:18 did before it moved, and
+    # waiting for it to bite is not a plan.
+    image: redis:${REDIS_VERSION:-7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2}
     command: ["redis-server", "--requirepass", "${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}", "--save", "", "--appendonly", "no"]
     environment:
       NC_REDIS_PASSWORD: ${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}
