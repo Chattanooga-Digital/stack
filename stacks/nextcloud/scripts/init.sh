@@ -147,6 +147,13 @@ if [ -n "$ADMIN_ACCOUNTS" ]; then
     occ user:welcome --reset-password "$uid" >/dev/null || log "'$uid' created; welcome mail did not send"
     log "created '$uid'"
   done
+
+  # Both faults found in this block were an account quietly not existing while
+  # the log read clean, so assert the outcome instead of trusting the loop.
+  printf '%s\n' "$ADMIN_ACCOUNTS" | tr ',' '\n' | while IFS=: read -r uid name email; do
+    [ -n "$uid" ] || continue
+    occ user:info "$uid" >/dev/null 2>&1 || die "account '$uid' missing after provisioning"
+  done
 fi
 
 # NEXTCLOUD_ADMIN_USER installs as the named account, so on a fresh instance there
