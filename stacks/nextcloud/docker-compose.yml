@@ -213,6 +213,7 @@ services:
       ADMIN_USER: ${ADMIN_USER:?ADMIN_USER not set}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
       ADMIN_ACCOUNTS: ${ADMIN_ACCOUNTS:-}
+      EXTRA_APPS: ${EXTRA_APPS:-}
     deploy:
       replicas: 1
       # Retried because a first boot can race `app` over the shared volume. The

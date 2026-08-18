@@ -16,6 +16,7 @@ SMTP_USER="${SMTP_USER:-resend}"
 MAIL_FROM="${MAIL_FROM:-no-reply}"
 TURN_PORT="${TURN_PORT:-3478}"
 ADMIN_ACCOUNTS="${ADMIN_ACCOUNTS:-}"
+EXTRA_APPS="${EXTRA_APPS:-}"
 
 case "$TALK_ENABLED" in true|false) ;; *) die "TALK_ENABLED must be true or false" ;; esac
 
@@ -69,7 +70,7 @@ occ config:system:set mail_smtppassword --value="$SMTP_PASSWORD"
 occ config:system:set mail_from_address --value="$MAIL_FROM"
 occ config:system:set mail_domain --value="$MAIL_DOMAIN"
 
-apps="richdocuments whiteboard deck calendar contacts mail quota_warning admin_audit suspicious_login admincockpit firstrunwizard twofactor_totp twofactor_backupcodes"
+apps="richdocuments whiteboard deck calendar contacts mail quota_warning admin_audit suspicious_login admincockpit firstrunwizard twofactor_totp twofactor_backupcodes $EXTRA_APPS"
 if [ "$TALK_ENABLED" = true ]; then apps="spreed $apps"; fi
 for app in $apps; do
   occ app:install "$app" >/dev/null 2>&1 || true
@@ -79,6 +80,10 @@ log "enabled: $apps"
 
 # Preliminary upstream, so admins only.
 occ app:enable admincockpit --groups admin >/dev/null
+
+# Runs Collabora as PHP inside this container, which the collabora service
+# replaces. Leaving both enabled costs memory and serves nothing.
+occ app:disable richdocumentscode >/dev/null 2>&1 || true
 
 occ config:app:set richdocuments wopi_url --value="https://$DOMAIN"
 occ config:app:set richdocuments public_wopi_url --value="https://$DOMAIN"
