@@ -133,7 +133,7 @@ fi
 # uid:Display Name:email, comma separated. Empty means a rebuild comes back with
 # the service account alone and every real person has to be recreated by hand.
 if [ -n "$ADMIN_ACCOUNTS" ]; then
-  printf '%s' "$ADMIN_ACCOUNTS" | tr ',' '\n' | while IFS=: read -r uid name email; do
+  printf '%s\n' "$ADMIN_ACCOUNTS" | tr ',' '\n' | while IFS=: read -r uid name email; do
     [ -n "$uid" ] || continue
     if printf '%s' "$users" | grep -q "\"$uid\""; then
       log "account '$uid' exists"
@@ -148,10 +148,13 @@ if [ -n "$ADMIN_ACCOUNTS" ]; then
   done
 fi
 
-# Only after the replacement is confirmed present.
-if printf '%s' "$(occ user:list --output=json)" | grep -q "\"$ADMIN_USER\""; then
-  occ user:disable admin >/dev/null
-  log "built-in 'admin' disabled"
+# NEXTCLOUD_ADMIN_USER installs as the named account, so on a fresh instance there
+# is no built-in admin to disable and the command would abort the run.
+if occ user:info admin >/dev/null 2>&1; then
+  if printf '%s' "$(occ user:list --output=json)" | grep -q "\"$ADMIN_USER\""; then
+    occ user:disable admin >/dev/null
+    log "built-in 'admin' disabled"
+  fi
 fi
 
 # Branding is instance state, so a rebuild from empty volumes loses it unless it
