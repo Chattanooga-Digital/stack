@@ -68,15 +68,15 @@ until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN
 done
 
 log "configuring mail: $SMTP_USER@$SMTP_HOST:$SMTP_PORT, from $MAIL_FROM@$MAIL_DOMAIN"
-occ config:system:set mail_smtpmode --value=smtp
-occ config:system:set mail_smtphost --value="$SMTP_HOST"
-occ config:system:set mail_smtpport --value="$SMTP_PORT" --type=integer
-occ config:system:set mail_smtpsecure --value=tls
-occ config:system:set mail_smtpauth --value=true --type=boolean
-occ config:system:set mail_smtpname --value="$SMTP_USER"
-occ config:system:set mail_smtppassword --value="$SMTP_PASSWORD"
-occ config:system:set mail_from_address --value="$MAIL_FROM"
-occ config:system:set mail_domain --value="$MAIL_DOMAIN"
+occ config:system:set mail_smtpmode --value=smtp >/dev/null
+occ config:system:set mail_smtphost --value="$SMTP_HOST" >/dev/null
+occ config:system:set mail_smtpport --value="$SMTP_PORT" --type=integer >/dev/null
+occ config:system:set mail_smtpsecure --value=tls >/dev/null
+occ config:system:set mail_smtpauth --value=true --type=boolean >/dev/null
+occ config:system:set mail_smtpname --value="$SMTP_USER" >/dev/null
+occ config:system:set mail_smtppassword --value="$SMTP_PASSWORD" >/dev/null
+occ config:system:set mail_from_address --value="$MAIL_FROM" >/dev/null
+occ config:system:set mail_domain --value="$MAIL_DOMAIN" >/dev/null
 
 apps="richdocuments whiteboard deck calendar contacts mail quota_warning admin_audit suspicious_login admincockpit firstrunwizard twofactor_totp twofactor_backupcodes $EXTRA_APPS"
 if [ "$TALK_ENABLED" = true ]; then apps="spreed $apps"; fi
@@ -93,9 +93,9 @@ occ app:enable admincockpit --groups admin >/dev/null
 # replaces. Leaving both enabled costs memory and serves nothing.
 occ app:disable richdocumentscode >/dev/null 2>&1 || true
 
-occ config:app:set richdocuments wopi_url --value="https://$DOMAIN"
-occ config:app:set richdocuments public_wopi_url --value="https://$DOMAIN"
-occ config:app:set richdocuments disable_certificate_verification --value=""
+occ config:app:set richdocuments wopi_url --value="https://$DOMAIN" >/dev/null
+occ config:app:set richdocuments public_wopi_url --value="https://$DOMAIN" >/dev/null
+occ config:app:set richdocuments disable_certificate_verification --value="" >/dev/null
 
 # Without this the cache is only filled by a background job and every document
 # open returns 500 until it runs.
@@ -109,15 +109,15 @@ if (!simplexml_load_string($r)) { fwrite(STDERR, "discovery did not parse\n"); e
 fwrite(STDERR, sprintf("[init] discovery primed, %d bytes\n", strlen($r)));
 '
 
-occ config:app:set whiteboard collabBackendUrl --value="https://$DOMAIN/whiteboard"
-occ config:app:set whiteboard jwt_secret_key --value="$JWT_SECRET"
+occ config:app:set whiteboard collabBackendUrl --value="https://$DOMAIN/whiteboard" >/dev/null
+occ config:app:set whiteboard jwt_secret_key --value="$JWT_SECRET" >/dev/null
 
 if [ "$TALK_ENABLED" = true ]; then
-  occ config:app:set spreed stun_servers --value "[\"$TURN_HOST:$TURN_PORT\"]"
+  occ config:app:set spreed stun_servers --value "[\"$TURN_HOST:$TURN_PORT\"]" >/dev/null
   occ config:app:set spreed turn_servers --value \
-    "[{\"schemes\":\"turn\",\"server\":\"$TURN_HOST:$TURN_PORT\",\"secret\":\"$TURN_SECRET\",\"protocols\":\"udp,tcp\"}]"
+    "[{\"schemes\":\"turn\",\"server\":\"$TURN_HOST:$TURN_PORT\",\"secret\":\"$TURN_SECRET\",\"protocols\":\"udp,tcp\"}]" >/dev/null
   occ config:app:set spreed signaling_servers --value \
-    "{\"servers\":[{\"server\":\"https://$TALK_HOST\",\"verify\":true}],\"secret\":\"$SIGNALING_SECRET\"}"
+    "{\"servers\":[{\"server\":\"https://$TALK_HOST\",\"verify\":true}],\"secret\":\"$SIGNALING_SECRET\"}" >/dev/null
   log "talk: relay $TURN_HOST:$TURN_PORT, signaling https://$TALK_HOST"
 fi
 
