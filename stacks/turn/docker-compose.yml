@@ -1,0 +1,64 @@
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config:
+    order: stop-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: on-failure
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+networks:
+  # Host netns, not published ports. A relay allocation lands on an arbitrary
+  # port in the relay range and Swarm forwards only the ports it publishes.
+  host:
+    name: host
+    external: true
+
+services:
+  turn:
+    image: ghcr.io/processone/eturnal:${ETURNAL_VERSION:-1.12.2}
+    networks: [host]
+    environment:
+      ETURNAL_ETC_DIR: /tmp
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/eturnal.yml <<EOF
+        eturnal:
+          listen:
+            - ip: "${LISTEN_IP:-::}"
+              port: ${TURN_PORT:-3478}
+              transport: udp
+            - ip: "${LISTEN_IP:-::}"
+              port: ${TURN_PORT:-3478}
+              transport: tcp
+          log_dir: stdout
+          log_level: ${LOG_LEVEL:-info}
+          secret: "${TURN_SECRET:?TURN_SECRET not set}"
+          relay_ipv4_addr: "${RELAY_IP:?RELAY_IP not set}"
+          relay_ipv6_addr: "${RELAY_IP_V6:-}"
+          relay_min_port: ${RELAY_MIN_PORT:-49152}
+          relay_max_port: ${RELAY_MAX_PORT:-65535}
+          blacklist_peers:
+            - recommended
+          whitelist_peers:
+        EOF
+        sed -i '/""/d' /tmp/eturnal.yml
+        printf '%s\n' "${PEER_WHITELIST:-10.0.0.0/8}" | tr ',' '\n' | sed 's/^/    - /' >> /tmp/eturnal.yml
+        exec run.sh
+    healthcheck:
+      test: ["CMD", "eturnalctl", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_TURN:-256M}
