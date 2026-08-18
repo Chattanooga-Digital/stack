@@ -38,6 +38,12 @@ networks:
     driver: overlay
     attachable: false
 
+configs:
+  init_sh:
+    # Bump when init.sh changes; Swarm configs are immutable.
+    name: ${INIT_CONFIG_NAME:-nextcloud_init_1}
+    file: ./scripts/init.sh
+
 volumes:
   nextcloud_html:
     driver: local
@@ -50,9 +56,9 @@ services:
     # A bare `18` here re-opens digest drift; keep the digest when bumping.
     image: postgres:${POSTGRES_VERSION:-18@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d}
     environment:
-      POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
-      POSTGRES_USER: ${NC_DB_USER:-nextcloud}
-      POSTGRES_PASSWORD: ${NC_DB_PASSWORD:?NC_DB_PASSWORD not set}
+      POSTGRES_DB: ${DB_NAME:-nextcloud}
+      POSTGRES_USER: ${DB_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
     volumes:
       # postgres:18 takes the volume one level up from 17 and earlier. Mounting
       # /var/lib/postgresql/data against 18 fails at startup with pg_upgrade advice
@@ -61,7 +67,7 @@ services:
     networks:
       - nextcloud_internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${NC_DB_USER:-nextcloud} -d ${NC_DB_NAME:-nextcloud}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nextcloud} -d ${DB_NAME:-nextcloud}"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -75,13 +81,15 @@ services:
   redis:
     # REDIS_VERSION is not set in the stack env either; same rule as db above.
     image: redis:${REDIS_VERSION:-7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2}
-    command: ["redis-server", "--requirepass", "${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}", "--save", "", "--appendonly", "no"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD not set}", "--save", "", "--appendonly", "no"]
     environment:
-      NC_REDIS_PASSWORD: ${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}
+      # Name has to match the healthcheck's ${REDIS_PASSWORD}, which the shell in
+      # the container expands, not compose.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD not set}
     networks:
       - nextcloud_internal
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${NC_REDIS_PASSWORD}\" ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -96,25 +104,33 @@ services:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
     environment:
       POSTGRES_HOST: db
-      POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
-      POSTGRES_USER: ${NC_DB_USER:-nextcloud}
-      POSTGRES_PASSWORD: ${NC_DB_PASSWORD:?NC_DB_PASSWORD not set}
+      POSTGRES_DB: ${DB_NAME:-nextcloud}
+      POSTGRES_USER: ${DB_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
       REDIS_HOST: redis
-      REDIS_HOST_PASSWORD: ${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}
+      REDIS_HOST_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD not set}
       # Never "admin": the built-in account is disabled once this one exists.
-      NEXTCLOUD_ADMIN_USER: ${NC_ADMIN_USER:?NC_ADMIN_USER not set}
-      NEXTCLOUD_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD not set}
-      NEXTCLOUD_TRUSTED_DOMAINS: ${NC_DOMAIN:?NC_DOMAIN not set}
-      OVERWRITEHOST: ${NC_DOMAIN:?NC_DOMAIN not set}
+      NEXTCLOUD_ADMIN_USER: ${ADMIN_USER:?ADMIN_USER not set}
+      NEXTCLOUD_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      NEXTCLOUD_TRUSTED_DOMAINS: ${DOMAIN:?DOMAIN not set}
+      OVERWRITEHOST: ${DOMAIN:?DOMAIN not set}
       OVERWRITEPROTOCOL: https
-      OVERWRITECLIURL: https://${NC_DOMAIN:?NC_DOMAIN not set}
+      OVERWRITECLIURL: https://${DOMAIN:?DOMAIN not set}
       # nextcloud/docker splits this value on spaces. Set this to the proxy
       # overlay subnet, not every RFC1918 range, on a shared host.
-      TRUSTED_PROXIES: ${NC_TRUSTED_PROXIES:?NC_TRUSTED_PROXIES not set}
-      PHP_UPLOAD_LIMIT: ${NC_PHP_UPLOAD_LIMIT:-10G}
-      PHP_MEMORY_LIMIT: ${NC_PHP_MEMORY_LIMIT:-1024M}
-      # OBJECTSTORE_S3_* is honoured at first install only. Adopting object storage
-      # after a rebuild is a data migration, not a config change.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:?TRUSTED_PROXIES not set}
+      PHP_UPLOAD_LIMIT: ${PHP_UPLOAD_LIMIT:-10G}
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-1024M}
+      # Honoured at first install only; adopting object storage later is a data
+      # migration. The image ignores the whole block when the bucket is unset.
+      OBJECTSTORE_S3_BUCKET: ${S3_BUCKET:-}
+      OBJECTSTORE_S3_HOST: ${S3_HOST:-}
+      OBJECTSTORE_S3_PORT: ${S3_PORT:-443}
+      OBJECTSTORE_S3_REGION: ${S3_REGION:-us-east-1}
+      OBJECTSTORE_S3_KEY: ${S3_KEY:-}
+      OBJECTSTORE_S3_SECRET: ${S3_SECRET:-}
+      OBJECTSTORE_S3_SSL: ${S3_SSL:-true}
+      OBJECTSTORE_S3_USEPATH_STYLE: ${S3_USE_PATH_STYLE:-true}
     volumes:
       - nextcloud_html:/var/www/html
     networks:
@@ -131,7 +147,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
-        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-app.rule=Host(`${NC_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-app.rule=Host(`${DOMAIN}`)"
         - "traefik.http.routers.${INSTANCE_NAME}-app.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
         - "traefik.http.routers.${INSTANCE_NAME}-app.tls=true"
         - "traefik.http.routers.${INSTANCE_NAME}-app.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
@@ -167,103 +183,47 @@ services:
   # service is only the signaling backend, not the Talk app.
   init:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
-    entrypoint: ["/bin/sh", "-c"]
+    user: www-data
+    entrypoint: ["/bin/sh", "/init.sh"]
+    configs:
+      - source: init_sh
+        target: /init.sh
+        mode: 0555
     volumes:
       - nextcloud_html:/var/www/html
     networks:
       - nextcloud_internal
     environment:
+      HOME: /tmp
       TZ: ${TZ:-America/New_York}
-      # Portainer's stack ref selects the compose file only. Deploying a branch
-      # without setting STACK_REF here runs main's scripts and reports success.
-      STACK_REPO: ${STACK_REPO:-Chattanooga-Digital/stack}
-      STACK_REF: ${STACK_REF:-main}
-      NC_DOMAIN: ${NC_DOMAIN:?NC_DOMAIN not set}
-      NC_JWT_SECRET: ${NC_JWT_SECRET:?NC_JWT_SECRET not set}
-      NC_TALK_ENABLED: ${NC_TALK_ENABLED:-true}
-      # NOT TALK_TURN_SECRET. Swapping them still passes STUN, 401s every
-      # allocation, and logs nothing.
-      NC_TURN_RELAY: ${NC_TURN_RELAY:-turn.chattanooga.digital:3478}
-      NC_TURN_RELAY_SECRET: ${NC_TURN_RELAY_SECRET:?NC_TURN_RELAY_SECRET not set}
-      NC_TURN_DOMAIN: ${TALK_HOST:?TALK_HOST not set}
-      NC_SIGNALING_SECRET: ${TALK_SIGNALING_SECRET:?TALK_SIGNALING_SECRET not set}
-      NC_SMTP_HOST: ${NC_SMTP_HOST:-smtp.resend.com}
-      NC_SMTP_PORT: ${NC_SMTP_PORT:-587}
-      NC_SMTP_USER: ${NC_SMTP_USER:-resend}
-      NC_SMTP_PASSWORD: ${NC_SMTP_PASSWORD:?NC_SMTP_PASSWORD not set}
-      # LOCAL PART ONLY. A full address here produces no-reply@x@x and mail vanishes.
-      NC_MAIL_FROM: ${NC_MAIL_FROM:-no-reply}
-      NC_MAIL_DOMAIN: ${NC_MAIL_DOMAIN:?NC_MAIL_DOMAIN not set}
-      NC_ADMIN_USER: ${NC_ADMIN_USER:?NC_ADMIN_USER not set}
-      NC_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD not set}
-      # uid:Display Name:email, comma separated. Empty means a rebuild returns the
-      # service account alone and every real person's account is gone.
-      NC_ADMIN_ACCOUNTS: ${NC_ADMIN_ACCOUNTS:-}
-    command:
-      - |
-        set -e
-        WEBROOT=/var/www/html
-        occ() { su -s /bin/sh www-data -c "HOME=/tmp php $$WEBROOT/occ $$*"; }
-
-        # Swarm ignores depends_on ordering.
-        echo "init: waiting for Nextcloud to finish installing"
-        i=0
-        until occ status 2>/dev/null | grep -q "installed: true"; do
-          i=$$((i + 1))
-          if [ $$i -gt 90 ]; then
-            echo "init: Nextcloud never reported installed after 15 minutes. Refusing to report success." >&2
-            exit 1
-          fi
-          sleep 10
-        done
-        echo "init: Nextcloud is installed"
-
-        echo "init: fetching provisioning scripts from $$STACK_REPO@$$STACK_REF"
-        curl -fsSL "https://codeload.github.com/$$STACK_REPO/tar.gz/$$STACK_REF" -o /tmp/stack.tgz
-        mkdir -p /tmp/stack
-        tar -xzf /tmp/stack.tgz -C /tmp/stack --strip-components=1
-        S=/tmp/stack/stacks/nextcloud/scripts
-        [ -f "$$S/apps.sh" ] || { echo "init: scripts missing from the fetched tree" >&2; exit 1; }
-
-        # 0755 explicitly: a root-only mode leaves www-data unable to read the file,
-        # and the error names the interpreter rather than the permission.
-        chmod 0755 "$$S"/*.sh
-
-        # apps.sh primes the WOPI cache through the PUBLIC hostname, so wait for
-        # Traefik and Collabora. If the prime fails the cache is only refilled by a
-        # background job, and every document open returns 500.
-        echo "init: waiting for Collabora discovery via https://$$NC_DOMAIN"
-        i=0
-        until [ "$$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-                    "https://$$NC_DOMAIN/hosting/discovery")" = "200" ]; do
-          i=$$((i + 1))
-          if [ $$i -gt 60 ]; then
-            echo "init: /hosting/discovery never answered. Office would 500 on every document open, so this is a failure, not a warning." >&2
-            exit 1
-          fi
-          sleep 10
-        done
-        echo "init: Collabora discovery is reachable"
-
-        # mail.sh first: harden.sh mails set-password links. Not wrapped in
-        # `|| true` — a provisioning failure must not deploy as a success.
-        for s in mail apps harden; do
-          echo "init: running $$s.sh"
-          su -s /bin/sh www-data -c "HOME=/tmp sh $$S/$$s.sh"
-        done
-
-        echo "init: provisioning complete. THIS IS NOT PROOF — open a document, a board and a call."
+      DOMAIN: ${DOMAIN:?DOMAIN not set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET not set}
+      TALK_ENABLED: ${TALK_ENABLED:-true}
+      TALK_HOST: ${TALK_HOST:?TALK_HOST not set}
+      TURN_HOST: ${TURN_HOST:?TURN_HOST not set}
+      TURN_PORT: ${TURN_PORT:-3478}
+      TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
+      SIGNALING_SECRET: ${SIGNALING_SECRET:?SIGNALING_SECRET not set}
+      SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-resend}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD not set}
+      MAIL_FROM: ${MAIL_FROM:-no-reply}
+      MAIL_DOMAIN: ${MAIL_DOMAIN:?MAIL_DOMAIN not set}
+      ADMIN_USER: ${ADMIN_USER:?ADMIN_USER not set}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      ADMIN_ACCOUNTS: ${ADMIN_ACCOUNTS:-}
     deploy:
       replicas: 1
-      # on-failure, not `none`: a first-boot race with `app` over the shared volume
-      # must be retried. The cap is what makes failing loudly safe.
+      # Retried because a first boot can race `app` over the shared volume. The
+      # cap is what makes failing loudly safe.
       restart_policy:
         condition: on-failure
         delay: 20s
         max_attempts: 6
       placement:
         constraints:
-          - ${PLACEMENT_CONSTRAINT:-node.role==manager}
+          - ${PLACEMENT_CONSTRAINT:-node.role == manager}
       resources:
         limits:
           memory: ${MEM_LIMIT_INIT:-512M}
@@ -271,8 +231,8 @@ services:
   collabora:
     image: collabora/code:${COLLABORA_VERSION:?COLLABORA_VERSION not set}
     environment:
-      aliasgroup1: https://${NC_DOMAIN:?NC_DOMAIN not set}:443
-      server_name: ${NC_DOMAIN:?NC_DOMAIN not set}
+      aliasgroup1: https://${DOMAIN:?DOMAIN not set}:443
+      server_name: ${DOMAIN:?DOMAIN not set}
       dictionaries: ${COLLABORA_DICTIONARIES:-en_US}
       extra_params: --o:ssl.enable=false --o:ssl.termination=true --o:logging.disable_server_audit=true --o:welcome.enable=false
     networks:
@@ -286,7 +246,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
-        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-office.rule=Host(`${NC_DOMAIN}`) && (PathPrefix(`/browser`) || PathPrefix(`/hosting`) || PathPrefix(`/cool`))"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-office.rule=Host(`${DOMAIN}`) && (PathPrefix(`/browser`) || PathPrefix(`/hosting`) || PathPrefix(`/cool`))"
         - "traefik.http.routers.${INSTANCE_NAME}-office.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
         - "traefik.http.routers.${INSTANCE_NAME}-office.tls=true"
         - "traefik.http.routers.${INSTANCE_NAME}-office.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
@@ -297,10 +257,10 @@ services:
   whiteboard:
     image: ghcr.io/nextcloud-releases/whiteboard:${WHITEBOARD_VERSION:?WHITEBOARD_VERSION not set}
     environment:
-      NEXTCLOUD_URL: https://${NC_DOMAIN:?NC_DOMAIN not set}
+      NEXTCLOUD_URL: https://${DOMAIN:?DOMAIN not set}
       # Must equal the whiteboard app's jwt_secret_key. A mismatch does not fail the
       # deploy; boards silently never connect.
-      JWT_SECRET_KEY: ${NC_JWT_SECRET:?NC_JWT_SECRET not set}
+      JWT_SECRET_KEY: ${JWT_SECRET:?JWT_SECRET not set}
       # Do NOT set STORAGE_STRATEGY=redis. The release build's Redis path exits with
       # "TypeError: RedisStrategy.createRedisClient is not a function".
     networks:
@@ -314,7 +274,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
-        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-board.rule=Host(`${NC_DOMAIN}`) && PathPrefix(`/whiteboard`)"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-board.rule=Host(`${DOMAIN}`) && PathPrefix(`/whiteboard`)"
         - "traefik.http.routers.${INSTANCE_NAME}-board.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
         - "traefik.http.routers.${INSTANCE_NAME}-board.tls=true"
         - "traefik.http.routers.${INSTANCE_NAME}-board.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
@@ -323,51 +283,18 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-board.middlewares=${INSTANCE_NAME}-security@swarm,${INSTANCE_NAME}-board-strip@swarm"
         - "traefik.http.services.${INSTANCE_NAME}-board.loadbalancer.server.port=3002"
 
-  # Talk: signaling (HPB) + janus + nats + eturnal TURN, in one image.
-  #
-  # THIS SERVICE PUBLISHES NO PORT, AND THAT IS THE POINT. It runs only as the
-  # signaling server (HPB), reached through Traefik on the hostname below. The
-  # STUN/TURN relay is SHARED — Chattanooga.Digital and Eduity both use the one
-  # on 3478, which is what it was stood up for. Do not add a `ports:` block here
-  # to give this stack a relay of its own: a second relay is redundant, and on
-  # this cluster it cannot bind 3478 anyway because an ingress publish reserves
-  # the port across every node and stack.
-  #
-  # Signaling is the half that CANNOT be shared today. The image bundles
-  # signaling + janus + eturnal, and the signaling server is bound to a single
-  # Nextcloud backend via NC_DOMAIN, so each site needs its own until that is
-  # split out. TURN shares trivially; signaling does not.
-  #
-  # TALK_PORT sets BOTH what eturnal binds inside the container AND what the
-  # server advertises to clients. It is not just an advertisement, so the
-  # published port, the target port and TALK_PORT must all be the same number.
-  # Get it wrong and the service still reports running while every STUN packet
-  # lands on a port nothing listens on — calls connect and carry no media.
-  #
-  # RELAY_IP_V4 is required under ingress publishing. Ingress SNATs through the
-  # overlay, so the relay sees 10.0.0.x instead of the real client address — a
-  # STUN binding request against a working ingress-published TURN returns a
-  # reflexive address of 10.0.0.2, which is useless as a relay candidate. The
-  # strangewill fork exists precisely to allow overriding it; upstream
-  # nextcloud/aio-talk derives it from `hostname -i` and cannot be corrected.
-  #
-  # Secrets are environment values here, and only here. The image reads
-  # TURN_SECRET / SIGNALING_SECRET / INTERNAL_SECRET from the environment only —
-  # verified in its /start.sh, whose sole *_FILE variable is SSL_CERT_FILE — so
-  # there is no _FILE form to point at /run/secrets. The usual workaround is an
-  # entrypoint wrapper, but Swarm ignores entrypoint overrides in stack deploys.
-  # Every other credential in this stack should move to Swarm secrets; this one
-  # cannot until the image supports it.
+  # Signaling and HPB only; relaying is the turn stack's job.
   talk:
     image: ${TALK_IMAGE:-strangewill/aio-talk-standalone}:${TALK_VERSION:-20260428}
     environment:
-      NC_DOMAIN: ${NC_DOMAIN:?NC_DOMAIN not set}
+      NC_DOMAIN: ${DOMAIN:?DOMAIN not set}
       TALK_HOST: ${TALK_HOST:?TALK_HOST not set}
-      TALK_PORT: ${TALK_PUBLISHED_PORT:-3478}
-      RELAY_IP_V4: ${TALK_RELAY_IP:?TALK_RELAY_IP not set}
-      EXTRA_WHITELIST_PEER: ${TALK_WHITELIST_PEER:-10.0.0.0/8}
-      TURN_SECRET: ${TALK_TURN_SECRET:?TALK_TURN_SECRET not set}
-      SIGNALING_SECRET: ${TALK_SIGNALING_SECRET:?TALK_SIGNALING_SECRET not set}
+      # Janus mints ephemeral credentials against the shared relay, so these
+      # three are the turn stack's values, not this container's.
+      TURN_DOMAIN: ${TURN_HOST:?TURN_HOST not set}
+      TALK_PORT: ${TURN_PORT:-3478}
+      TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
+      SIGNALING_SECRET: ${SIGNALING_SECRET:?SIGNALING_SECRET not set}
       INTERNAL_SECRET: ${TALK_INTERNAL_SECRET:?TALK_INTERNAL_SECRET not set}
       AIO_LOG_LEVEL: ${TALK_LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
