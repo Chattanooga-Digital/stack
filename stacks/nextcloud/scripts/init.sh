@@ -17,6 +17,14 @@ MAIL_FROM="${MAIL_FROM:-no-reply}"
 TURN_PORT="${TURN_PORT:-3478}"
 ADMIN_ACCOUNTS="${ADMIN_ACCOUNTS:-}"
 EXTRA_APPS="${EXTRA_APPS:-}"
+THEME_NAME="${THEME_NAME:-}"
+THEME_URL="${THEME_URL:-}"
+THEME_SLOGAN="${THEME_SLOGAN:-}"
+THEME_COLOR="${THEME_COLOR:-}"
+THEME_BACKGROUND="${THEME_BACKGROUND:-}"
+THEME_LOGO_B64="${THEME_LOGO_B64:-}"
+THEME_LOGOHEADER_B64="${THEME_LOGOHEADER_B64:-}"
+THEME_FAVICON_B64="${THEME_FAVICON_B64:-}"
 
 case "$TALK_ENABLED" in true|false) ;; *) die "TALK_ENABLED must be true or false" ;; esac
 
@@ -144,6 +152,32 @@ fi
 if printf '%s' "$(occ user:list --output=json)" | grep -q "\"$ADMIN_USER\""; then
   occ user:disable admin >/dev/null
   log "built-in 'admin' disabled"
+fi
+
+# Branding is instance state, so a rebuild from empty volumes loses it unless it
+# is restored here. theming:config has no key for the images; the app reads them
+# from appdata and trusts the matching *Mime entry, so that is what this writes.
+if [ -n "$THEME_NAME$THEME_COLOR$THEME_LOGO_B64$THEME_FAVICON_B64" ]; then
+  for pair in "name=$THEME_NAME" "url=$THEME_URL" "slogan=$THEME_SLOGAN" \
+              "primary_color=$THEME_COLOR" "background_color=$THEME_BACKGROUND"; do
+    key=${pair%%=*}; val=${pair#*=}
+    if [ -n "$val" ]; then occ theming:config "$key" "$val" >/dev/null; fi
+  done
+
+  imgdir="$(occ config:system:get datadirectory)/appdata_$(occ config:system:get instanceid)/theming/global/images"
+  mkdir -p "$imgdir"
+  for img in logo logoheader favicon; do
+    eval "b64=\${THEME_$(printf '%s' "$img" | tr '[:lower:]' '[:upper:]')_B64:-}"
+    if [ -n "$b64" ]; then
+      printf '%s' "$b64" | base64 -d > "$imgdir/$img"
+      occ config:app:set theming "${img}Mime" --value=image/png >/dev/null
+      log "branding: restored $img ($(wc -c < "$imgdir/$img") bytes)"
+    fi
+  done
+
+  # Clients cache the old images against the old number.
+  cb="$(occ config:app:get theming cachebuster 2>/dev/null || true)"
+  occ config:app:set theming cachebuster --value="$(( ${cb:-0} + 1 ))" >/dev/null
 fi
 
 log "provisioning complete"
