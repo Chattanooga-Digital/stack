@@ -46,15 +46,8 @@ volumes:
 
 services:
   db:
-    # Digest-pinned, and the default carries the digest because nothing sets
-    # POSTGRES_VERSION in the stack env -- this default IS what production runs.
-    #
-    # `18` on its own is a floating tag, and under Swarm that reads safer than it is:
-    # the tag is resolved to a digest once at service-create and never re-resolved, so
-    # the running service looks pinned while the SOURCE is not. Measured 2026-08-16, the
-    # running service sits on 7157393f and `postgres:18` upstream now resolves to
-    # 06cad38a. The container in front of the data is fine; the next stack update of any
-    # kind is what quietly puts a different Postgres build under it.
+    # POSTGRES_VERSION is not set in the stack env, so this default is what runs.
+    # A bare `18` here re-opens digest drift; keep the digest when bumping.
     image: postgres:${POSTGRES_VERSION:-18@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d}
     environment:
       POSTGRES_DB: ${NC_DB_NAME:-nextcloud}
@@ -80,11 +73,7 @@ services:
           memory: ${MEM_LIMIT_DB:-1G}
 
   redis:
-    # Same treatment as db, and for the same reason: REDIS_VERSION is not set in the
-    # stack env either, so this default is what production runs. `7-alpine` has not
-    # drifted yet -- the running digest still matches what the tag resolves to today --
-    # but it carries exactly the same exposure as postgres:18 did before it moved, and
-    # waiting for it to bite is not a plan.
+    # REDIS_VERSION is not set in the stack env either; same rule as db above.
     image: redis:${REDIS_VERSION:-7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2}
     command: ["redis-server", "--requirepass", "${NC_REDIS_PASSWORD:?NC_REDIS_PASSWORD not set}", "--save", "", "--appendonly", "no"]
     environment:
@@ -174,21 +163,8 @@ services:
         limits:
           memory: ${MEM_LIMIT_CRON:-512M}
 
-  # ── PROVISIONING ───────────────────────────────────────────────────────────
-  # Installs the app set, wires Office / Whiteboard / Talk, configures outbound
-  # mail, and creates the named admin accounts.
-  #
-  # WITHOUT THIS SERVICE A DEPLOY PRODUCES A STOCK NEXTCLOUD. Seven containers and
-  # none of the apps the client asked for: no Talk app (the `talk` service is only
-  # the signaling backend), no Office, no calendar, contacts or mail, none of the
-  # security set. That was the state of this stack the first time it was offered
-  # for review, and the README mentioned it in passing rather than as the defect
-  # it was. Removing this service reintroduces exactly that.
-  #
-  # Runs in the NEXTCLOUD image rather than alpine, because these are `occ` calls
-  # and occ needs PHP and the webroot. Shares nextcloud_html with `app` for the
-  # same reason `cron` does. Nothing here mounts the Docker socket; not needing to
-  # is the whole argument against all-in-one and it is not traded for convenience.
+  # Installs the apps. Without it a deploy yields a stock Nextcloud: the `talk`
+  # service is only the signaling backend, not the Talk app.
   init:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
     entrypoint: ["/bin/sh", "-c"]
@@ -198,29 +174,19 @@ services:
       - nextcloud_internal
     environment:
       TZ: ${TZ:-America/New_York}
-      # The scripts are fetched from THIS repo at deploy time, because the image has
-      # no git and Portainer's clone never reaches a container.
-      #
-      # STACK_REF has to be threaded explicitly. Portainer's stack ref selects the
-      # compose FILE only, so without this a branch deploy would run main's scripts
-      # against a branch's compose. That failure is silent: the deploy succeeds and
-      # the change simply is not there.
+      # Portainer's stack ref selects the compose file only. Deploying a branch
+      # without setting STACK_REF here runs main's scripts and reports success.
       STACK_REPO: ${STACK_REPO:-Chattanooga-Digital/stack}
       STACK_REF: ${STACK_REF:-main}
-      # --- apps.sh -----------------------------------------------------------
       NC_DOMAIN: ${NC_DOMAIN:?NC_DOMAIN not set}
       NC_JWT_SECRET: ${NC_JWT_SECRET:?NC_JWT_SECRET not set}
       NC_TALK_ENABLED: ${NC_TALK_ENABLED:-true}
-      # The relay is SHARED and identical in every environment. Its secret is NOT
-      # TALK_TURN_SECRET: that one belongs to our own talk container. Feeding one in
-      # place of the other still passes STUN, 401s every allocation, and logs
-      # nothing.
+      # NOT TALK_TURN_SECRET. Swapping them still passes STUN, 401s every
+      # allocation, and logs nothing.
       NC_TURN_RELAY: ${NC_TURN_RELAY:-turn.chattanooga.digital:3478}
       NC_TURN_RELAY_SECRET: ${NC_TURN_RELAY_SECRET:?NC_TURN_RELAY_SECRET not set}
-      # Signaling is per environment, so this is this instance's own talk hostname.
       NC_TURN_DOMAIN: ${TALK_HOST:?TALK_HOST not set}
       NC_SIGNALING_SECRET: ${TALK_SIGNALING_SECRET:?TALK_SIGNALING_SECRET not set}
-      # --- mail.sh -----------------------------------------------------------
       NC_SMTP_HOST: ${NC_SMTP_HOST:-smtp.resend.com}
       NC_SMTP_PORT: ${NC_SMTP_PORT:-587}
       NC_SMTP_USER: ${NC_SMTP_USER:-resend}
@@ -228,12 +194,10 @@ services:
       # LOCAL PART ONLY. A full address here produces no-reply@x@x and mail vanishes.
       NC_MAIL_FROM: ${NC_MAIL_FROM:-no-reply}
       NC_MAIL_DOMAIN: ${NC_MAIL_DOMAIN:?NC_MAIL_DOMAIN not set}
-      # --- harden.sh ---------------------------------------------------------
       NC_ADMIN_USER: ${NC_ADMIN_USER:?NC_ADMIN_USER not set}
       NC_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD not set}
-      # uid:Display Name:email, comma separated. Empty is a no-op, and an empty value
-      # means a rebuild comes back with the service account alone and every real
-      # person's account is silently gone.
+      # uid:Display Name:email, comma separated. Empty means a rebuild returns the
+      # service account alone and every real person's account is gone.
       NC_ADMIN_ACCOUNTS: ${NC_ADMIN_ACCOUNTS:-}
     command:
       - |
@@ -241,8 +205,7 @@ services:
         WEBROOT=/var/www/html
         occ() { su -s /bin/sh www-data -c "HOME=/tmp php $$WEBROOT/occ $$*"; }
 
-        # Swarm ignores `depends_on` ordering, so waiting is the only option. Poll
-        # until the installer has finished rather than assuming `app` won the race.
+        # Swarm ignores depends_on ordering.
         echo "init: waiting for Nextcloud to finish installing"
         i=0
         until occ status 2>/dev/null | grep -q "installed: true"; do
@@ -262,25 +225,13 @@ services:
         S=/tmp/stack/stacks/nextcloud/scripts
         [ -f "$$S/apps.sh" ] || { echo "init: scripts missing from the fetched tree" >&2; exit 1; }
 
-        # 0755 EXPLICITLY. A mode that only root can execute leaves www-data unable to
-        # even read the file, and the error names the interpreter rather than the
-        # permission, which has cost a day before.
+        # 0755 explicitly: a root-only mode leaves www-data unable to read the file,
+        # and the error names the interpreter rather than the permission.
         chmod 0755 "$$S"/*.sh
 
-        # Wait for Collabora to answer THROUGH Traefik on the public hostname before
-        # running apps.sh.
-        #
-        # apps.sh primes the WOPI discovery cache, and that call goes out to
-        # https://$$NC_DOMAIN rather than to collabora:9980 — deliberately, because the
-        # internal URL would need allow_local_remote_servers=true and that disables SSRF
-        # protection site-wide. So the prime cannot succeed until DNS, the certificate,
-        # the Traefik path rules and Collabora itself are ALL up.
-        #
-        # On a first deploy they are not. Measured on a clean stack 2026-08-16: the prime
-        # threw a Guzzle connection error, apps.sh warned, and the deploy otherwise looked
-        # entirely successful. The cost is that discovery is only ever fetched by a
-        # background job, so an empty cache stays empty and every attempt to open a
-        # document returns HTTP 500 naming neither cron nor discovery.
+        # apps.sh primes the WOPI cache through the PUBLIC hostname, so wait for
+        # Traefik and Collabora. If the prime fails the cache is only refilled by a
+        # background job, and every document open returns 500.
         echo "init: waiting for Collabora discovery via https://$$NC_DOMAIN"
         i=0
         until [ "$$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
@@ -294,12 +245,8 @@ services:
         done
         echo "init: Collabora discovery is reachable"
 
-        # Order matters. mail.sh first so SMTP exists before harden.sh sends
-        # set-your-own-password links to the named admins.
-        #
-        # NOT wrapped in `|| true`. A provisioning failure that exits 0 deploys an
-        # unconfigured instance as a success, which is how a sibling stack shipped an
-        # unthemed site for weeks while the log said it was done.
+        # mail.sh first: harden.sh mails set-password links. Not wrapped in
+        # `|| true` — a provisioning failure must not deploy as a success.
         for s in mail apps harden; do
           echo "init: running $$s.sh"
           su -s /bin/sh www-data -c "HOME=/tmp sh $$S/$$s.sh"
@@ -308,10 +255,8 @@ services:
         echo "init: provisioning complete. THIS IS NOT PROOF — open a document, a board and a call."
     deploy:
       replicas: 1
-      # on-failure with a cap, not `none`. `none` would mean a first-boot race with
-      # `app` over the shared volume never gets retried, and the instance comes up
-      # unprovisioned with a green deploy. A cap is what makes removing the `|| true`
-      # above safe: a genuine failure stops after six tries instead of looping.
+      # on-failure, not `none`: a first-boot race with `app` over the shared volume
+      # must be retried. The cap is what makes failing loudly safe.
       restart_policy:
         condition: on-failure
         delay: 20s
