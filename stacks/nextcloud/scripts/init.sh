@@ -17,15 +17,6 @@ MAIL_FROM="${MAIL_FROM:-no-reply}"
 TURN_PORT="${TURN_PORT:-3478}"
 ADMIN_ACCOUNTS="${ADMIN_ACCOUNTS:-}"
 EXTRA_APPS="${EXTRA_APPS:-}"
-THEME_NAME="${THEME_NAME:-}"
-THEME_URL="${THEME_URL:-}"
-THEME_SLOGAN="${THEME_SLOGAN:-}"
-THEME_COLOR="${THEME_COLOR:-}"
-THEME_BACKGROUND="${THEME_BACKGROUND:-}"
-THEME_LOGO_B64="${THEME_LOGO_B64:-}"
-THEME_LOGOHEADER_B64="${THEME_LOGOHEADER_B64:-}"
-THEME_FAVICON_B64="${THEME_FAVICON_B64:-}"
-
 case "$TALK_ENABLED" in true|false) ;; *) die "TALK_ENABLED must be true or false" ;; esac
 
 # Nextcloud builds the sender as <from>@<domain>, so a full address here yields
@@ -128,14 +119,21 @@ if [ -n "$ADMIN_ACCOUNTS" ]; then
   printf '%s\n' "$ADMIN_ACCOUNTS" | tr ',' '\n' | while IFS=: read -r uid name email; do
     [ -n "$uid" ] || continue
     if occ user:info "$uid" >/dev/null 2>&1; then
-      log "account '$uid' exists"
+      # The password an account is created with is random and discarded, so an
+      # account nobody has signed into has no way in if its welcome mail was lost.
+      # Re-sending it makes a redeploy the recovery path.
+      if occ user:info "$uid" --output=json | tr -d ' ' | grep -q '"last_seen":"never"'; then
+        occ user:welcome --reset-password "$uid" >/dev/null
+        log "account '$uid' has never signed in, welcome mail re-sent"
+      else
+        log "account '$uid' exists"
+      fi
       continue
     fi
     pw="$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-32)"
     OC_PASS="$pw" occ user:add --password-from-env --group=admin --display-name="$name" "$uid" >/dev/null
     if [ -n "${email:-}" ]; then occ user:setting "$uid" settings email "$email" >/dev/null; fi
-    # Sends a set-password link, so it must not run for an account that exists.
-    occ user:welcome --reset-password "$uid" >/dev/null || log "'$uid' created; welcome mail did not send"
+    occ user:welcome --reset-password "$uid" >/dev/null
     log "created '$uid'"
   done
 fi
@@ -147,32 +145,6 @@ if occ user:info admin >/dev/null 2>&1; then
     occ user:disable admin >/dev/null
     log "built-in 'admin' disabled"
   fi
-fi
-
-# Branding is instance state, so a rebuild from empty volumes loses it unless it
-# is restored here. theming:config has no key for the images; the app reads them
-# from appdata and trusts the matching *Mime entry, so that is what this writes.
-if [ -n "$THEME_NAME$THEME_COLOR$THEME_LOGO_B64$THEME_FAVICON_B64" ]; then
-  for pair in "name=$THEME_NAME" "url=$THEME_URL" "slogan=$THEME_SLOGAN" \
-              "primary_color=$THEME_COLOR" "background_color=$THEME_BACKGROUND"; do
-    key=${pair%%=*}; val=${pair#*=}
-    if [ -n "$val" ]; then occ theming:config "$key" "$val" >/dev/null; fi
-  done
-
-  imgdir="$(occ config:system:get datadirectory)/appdata_$(occ config:system:get instanceid)/theming/global/images"
-  mkdir -p "$imgdir"
-  for img in logo logoheader favicon; do
-    eval "b64=\${THEME_$(printf '%s' "$img" | tr '[:lower:]' '[:upper:]')_B64:-}"
-    if [ -n "$b64" ]; then
-      printf '%s' "$b64" | base64 -d > "$imgdir/$img"
-      occ config:app:set theming "${img}Mime" --value=image/png >/dev/null
-      log "branding: restored $img ($(wc -c < "$imgdir/$img") bytes)"
-    fi
-  done
-
-  # Clients cache the old images against the old number.
-  cb="$(occ config:app:get theming cachebuster 2>/dev/null || true)"
-  occ config:app:set theming cachebuster --value="$(( ${cb:-0} + 1 ))" >/dev/null
 fi
 
 log "provisioning complete"

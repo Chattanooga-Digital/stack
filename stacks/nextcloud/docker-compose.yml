@@ -214,14 +214,6 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
       ADMIN_ACCOUNTS: ${ADMIN_ACCOUNTS:-}
       EXTRA_APPS: ${EXTRA_APPS:-}
-      THEME_NAME: ${THEME_NAME:-}
-      THEME_URL: ${THEME_URL:-}
-      THEME_SLOGAN: ${THEME_SLOGAN:-}
-      THEME_COLOR: ${THEME_COLOR:-}
-      THEME_BACKGROUND: ${THEME_BACKGROUND:-}
-      THEME_LOGO_B64: ${THEME_LOGO_B64:-}
-      THEME_LOGOHEADER_B64: ${THEME_LOGOHEADER_B64:-}
-      THEME_FAVICON_B64: ${THEME_FAVICON_B64:-}
     deploy:
       replicas: 1
       # Retried because a first boot can race `app` over the shared volume. The
