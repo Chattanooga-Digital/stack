@@ -5,11 +5,13 @@ once. [stacks/bigcapital](../stacks/bigcapital) is the reference implementation.
 
 ## Layout
 
-Every stack is `stacks/<name>/` holding exactly:
+Every stack is `stacks/<name>/` holding:
 
 - `docker-compose.yml`
 - `.env.example` with a REQUIRED block and a commented OPTIONAL block
 - `README.md` covering **only what is true of this stack and not the others**
+- `scripts/` only if a service runs shell longer than a few lines, which never
+  lives inline in `command:`
 
 A stack README does not restate the platform baseline, the Portainer deploy
 procedure, or anything on this page. Assume the reader has read both. Write down
@@ -68,6 +70,13 @@ from `${DOMAIN}`.
   `traefik.swarm.network=traefik_net`
 - Pin services to managers with `placement.constraints: [node.role == manager]`
 - Stateful services update `stop-first`, stateless update `start-first`
+
+## Scripts
+
+A stack script reaches its container as a Swarm `config` sourced from the repo
+checkout, so the deployed ref's script is what runs. Never fetch code from the
+network at deploy time. Config objects are immutable: version the config name
+when the file changes, or the redeploy fails.
 
 ## Credentials
 
