@@ -32,15 +32,6 @@ case "$TALK_ENABLED" in true|false) ;; *) die "TALK_ENABLED must be true or fals
 # no-reply@x@x and every message is silently dropped.
 case "$MAIL_FROM" in *@*) die "MAIL_FROM is the local part only, got '$MAIL_FROM'" ;; esac
 
-required="DOMAIN JWT_SECRET SMTP_PASSWORD MAIL_DOMAIN ADMIN_USER ADMIN_PASSWORD"
-if [ "$TALK_ENABLED" = true ]; then
-  required="$required TALK_HOST TURN_HOST TURN_SECRET SIGNALING_SECRET"
-fi
-for v in $required; do
-  eval "val=\${$v:-}"
-  [ -n "$val" ] || die "$v is required"
-done
-
 [ "$ADMIN_USER" != admin ] || die "ADMIN_USER must not be the built-in 'admin'"
 
 if [ "$TALK_ENABLED" = true ]; then
