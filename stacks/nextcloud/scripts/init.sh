@@ -121,8 +121,9 @@ if [ "$TALK_ENABLED" = true ]; then
   log "talk: relay $TURN_HOST:$TURN_PORT, signaling https://$TALK_HOST"
 fi
 
-users="$(occ user:list --output=json)"
-if printf '%s' "$users" | grep -q "\"$ADMIN_USER\""; then
+# user:list --output=json is a uid to display-name map, so grepping it matches
+# display names too. user:info keys on the uid alone.
+if occ user:info "$ADMIN_USER" >/dev/null 2>&1; then
   log "admin '$ADMIN_USER' exists"
 else
   OC_PASS="$ADMIN_PASSWORD" occ user:add --password-from-env --group=admin \
@@ -135,7 +136,7 @@ fi
 if [ -n "$ADMIN_ACCOUNTS" ]; then
   printf '%s\n' "$ADMIN_ACCOUNTS" | tr ',' '\n' | while IFS=: read -r uid name email; do
     [ -n "$uid" ] || continue
-    if printf '%s' "$users" | grep -q "\"$uid\""; then
+    if occ user:info "$uid" >/dev/null 2>&1; then
       log "account '$uid' exists"
       continue
     fi
@@ -151,7 +152,7 @@ fi
 # NEXTCLOUD_ADMIN_USER installs as the named account, so on a fresh instance there
 # is no built-in admin to disable and the command would abort the run.
 if occ user:info admin >/dev/null 2>&1; then
-  if printf '%s' "$(occ user:list --output=json)" | grep -q "\"$ADMIN_USER\""; then
+  if occ user:info "$ADMIN_USER" >/dev/null 2>&1; then
     occ user:disable admin >/dev/null
     log "built-in 'admin' disabled"
   fi
