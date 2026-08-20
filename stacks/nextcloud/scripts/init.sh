@@ -119,15 +119,9 @@ if [ -n "$ADMIN_ACCOUNTS" ]; then
   printf '%s\n' "$ADMIN_ACCOUNTS" | tr ',' '\n' | while IFS=: read -r uid name email; do
     [ -n "$uid" ] || continue
     if occ user:info "$uid" >/dev/null 2>&1; then
-      # The password an account is created with is random and discarded, so an
-      # account nobody has signed into has no way in if its welcome mail was lost.
-      # Re-sending it makes a redeploy the recovery path.
-      if occ user:info "$uid" --output=json | tr -d ' ' | grep -q '"last_seen":"never"'; then
-        occ user:welcome --reset-password "$uid" >/dev/null
-        log "account '$uid' has never signed in, welcome mail re-sent"
-      else
-        log "account '$uid' exists"
-      fi
+      # Existing accounts are left alone. Re-sending the welcome mail on every
+      # start mailed dormant accounts repeatedly; password reset is the recovery path.
+      log "account '$uid' exists"
       continue
     fi
     pw="$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-32)"
