@@ -1,80 +1,41 @@
 # Nextcloud
 
-[Nextcloud](https://github.com/nextcloud/server) with Talk and Office, running
-`go.eduity.net`. Six services: `nextcloud` (Apache), `cron`, `talk`,
-`collabora`, plus its own `db` and `redis`.
+Files, Office, Whiteboard and Talk. Declarative rather than
+[All-in-One](https://github.com/nextcloud/all-in-one), whose mastercontainer mounts
+the Docker socket, so on a shared host anyone who can admin AIO reaches every other
+tenant's containers.
 
-Three hostnames, three Traefik routers, three DNS records: `DOMAIN` for files,
-`TURN_DOMAIN` for Talk, `OFFICE_DOMAIN` for Collabora.
+Installs unattended from `ADMIN_USER` and `ADMIN_PASSWORD`, with no wizard step. The
+`init` service then provisions the instance, so a deploy onto empty volumes produces
+the app set, Office, Whiteboard, mail and the named admins with no hand steps.
 
-Primary storage is S3, not the `nc_html` volume. That volume holds the
-installation and config only.
+## Routing
 
-## NEXTCLOUD_VERSION is load-bearing
+Three routers share `DOMAIN`, separated by priority because the app's rule matches the
+whole host. Office and Whiteboard are path-routed rather than given subdomains, so
+neither needs a DNS record. Talk is the exception and needs its own.
 
-Nextcloud refuses a database written by a newer version and will not skip a
-major. A floating tag like `nextcloud:apache` is therefore a broken instance
-waiting to happen, not an upgrade, which is why the variable is required with no
-default. Pin it to a real tag and step one major at a time.
+| Router | Rule | Priority | Port |
+|---|---|---|---|
+| `${INSTANCE_NAME}-office` | `Host(DOMAIN) && PathPrefix(/browser,/hosting,/cool)` | 100 | 9980 |
+| `${INSTANCE_NAME}-board` | `Host(DOMAIN) && PathPrefix(/whiteboard)` | 100 | 3002 |
+| `${INSTANCE_NAME}-app` | `Host(DOMAIN)` | 10 | 80 |
+| `${INSTANCE_NAME}-talk` | `Host(TALK_HOST)` | | 8081 |
 
-Read the version the live instance is on with:
+## Talk relays through the turn stack
 
-```
-docker exec $(docker ps -qf name=nextcloud) php occ status
-```
+This stack runs signaling and the HPB. Relaying belongs to [turn](../turn), which has
+to be deployed and reachable first. `init` writes Nextcloud's STUN, TURN and signaling
+config, so there is no `occ` step to run by hand.
 
-## Talk networking
+`TURN_HOST`, `TURN_PORT` and `TURN_SECRET` are that stack's values and have to match it
+exactly. A wrong secret still passes STUN, then fails every allocation with a 401 and
+logs nothing.
 
-`talk` publishes 3478 with `mode: host` so TURN sees real client addresses
-rather than the ingress mesh's SNAT. It still joins `traefik_net`, because the
-`${INSTANCE_NAME}-talk` router fronts its signaling on 8081 over the overlay.
+The talk container ships its own eturnal, which goes unused because nothing points at
+it and no port is published for it.
 
-`RELAY_IP` is the public load balancer address. If it is wrong, calls connect
-and then carry no media.
+## Decide before the first deploy
 
-## Office runs as its own container
-
-`collabora` replaces the built-in CODE server (the `richdocumentscode` app),
-which ran Collabora as PHP inside the Nextcloud container. As `www-data` it
-could not create per-document jails, fell back to copying the LibreOffice tree
-per child process instead of bind-mounting it, and had no listener, so every
-byte was tunnelled through `proxy.php`.
-
-Fixing that in place would mean giving `SYS_ADMIN` to the container that holds
-the data, the database credentials, and the config. The capability belongs on
-the renderer instead, so `cap_add: [MKNOD, SYS_ADMIN]` is on `collabora` alone.
-Do not move it to `nextcloud`.
-
-Collabora reaches Nextcloud over the public `DOMAIN`, so the host must be able
-to resolve and route to its own public name. If hairpin NAT blocks that, add an
-`extra_hosts` entry pointing `DOMAIN` at the internal address.
-
-### Wiring it up
-
-Not declarative: this repo has no init script, so run these once against the
-running instance.
-
-```
-occ app:disable richdocumentscode
-occ config:app:set richdocuments wopi_url --value https://OFFICE_DOMAIN
-occ richdocuments:activate-config
-```
-
-Leave `richdocuments` itself enabled. Confirm under **Administration settings →
-Office**, which should report the connection as OK.
-
-## Notes
-
-- Whiteboard is not in this stack.
-- Only `db` and `redis` have healthchecks. The Nextcloud, Talk, and Collabora
-  images have not been checked for `curl` or `wget`, and a healthcheck whose
-  binary is missing marks the service unhealthy and restart-loops it. Collabora
-  answers `GET /hosting/discovery` on 9980 once one is confirmed present.
-- Traefik upgrades WebSockets and sets `X-Forwarded-Proto` without configuration,
-  so `collabora` needs no header labels. Response timeouts for long-lived
-  connections are entrypoint-level Traefik config, outside this repo.
-- Every service updates stop-first. `nextcloud` and `cron` share `nc_html`, so
-  two versions must never run against it at once.
-- First-run admin variables are deliberately absent. This stack is attached to
-  an installed instance; `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD`
-  would be ignored anyway once the database exists.
+Primary storage is the `nextcloud_html` volume. `S3_*` is honoured at first install
+only, so adopting object storage later is a data migration rather than a config change.
