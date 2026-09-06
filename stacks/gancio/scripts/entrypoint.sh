@@ -18,6 +18,51 @@ mkdir -p "$DATA/uploads" "$DATA/logs" "$DATA/user_locale"
 : "${GANCIO_BASEURL:?GANCIO_BASEURL not set}"
 : "${DB_PASSWORD:?DB_PASSWORD not set}"
 
+# Gancio has no SMTP environment variables. server/api/controller/settings.js
+# seeds its live settings from this file -- `admin_email: config.admin_email ||
+# ''` and `smtp: config.smtp || {}` -- and thereafter reads the `settings` table,
+# so a value saved in the admin panel wins over this one. That layering is
+# deliberate: this is the reproducible default a rebuild restores, not a lock on
+# what the site owner may change.
+#
+# Emitted only when SMTP_HOST is set, because a half-filled block is worse than
+# none. mail.js builds its nodemailer transport from `settings.smtp || {}`, and
+# the guard that warns about unconfigured mail is `!settings.smtp` -- which an
+# empty object passes. A blank host would therefore boot clean and fail at send.
+MAIL_JSON=""
+if [ -n "${SMTP_HOST:-}" ]; then
+  : "${ADMIN_EMAIL:?ADMIN_EMAIL not set (gancio sends as this address)}"
+  SMTP_PORT="${SMTP_PORT:-587}"
+
+  # 465 is implicit TLS, 587 is STARTTLS. Defaulted off the port so the two
+  # common cases need no second variable, still overridable for the third.
+  if [ "$SMTP_PORT" = "465" ]; then
+    SMTP_SECURE="${SMTP_SECURE:-true}"
+  else
+    SMTP_SECURE="${SMTP_SECURE:-false}"
+  fi
+
+  # A quote or backslash in a value would produce invalid JSON, and gancio
+  # reports that as a parse error against a file nobody can see. Fail here with
+  # the reason instead.
+  case "${SMTP_PASSWORD:-}${SMTP_USER:-}${ADMIN_EMAIL}" in
+    *'"'*|*\\*)
+      echo "FATAL: SMTP_USER/SMTP_PASSWORD/ADMIN_EMAIL cannot contain a quote or backslash" >&2
+      exit 1 ;;
+  esac
+
+  MAIL_JSON=$(cat <<MAILJSON
+  "admin_email": "${ADMIN_EMAIL}",
+  "smtp": {
+    "host": "${SMTP_HOST}",
+    "port": ${SMTP_PORT},
+    "secure": ${SMTP_SECURE},
+    "auth": { "user": "${SMTP_USER:-}", "pass": "${SMTP_PASSWORD:-}" }
+  },
+MAILJSON
+)
+fi
+
 HOSTNAME_ONLY=$(printf '%s' "$GANCIO_BASEURL" | sed -e 's|^https\{0,1\}://||' -e 's|/.*$||')
 
 cat > /config.json <<JSON
@@ -36,6 +81,7 @@ cat > /config.json <<JSON
     "password": "${DB_PASSWORD}",
     "logging": false
   },
+${MAIL_JSON}
   "user_locale": "${DATA}/user_locale",
   "upload_path": "${DATA}/uploads"
 }

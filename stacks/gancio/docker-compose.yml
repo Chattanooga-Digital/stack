@@ -37,7 +37,7 @@ configs:
   gancio_entrypoint:
     # Immutable once created. Bump ENTRYPOINT_VERSION whenever the script
     # changes, or the redeploy fails on a name that already exists.
-    name: ${INSTANCE_NAME:?INSTANCE_NAME not set}-gancio-entrypoint-${ENTRYPOINT_VERSION:-1}
+    name: ${INSTANCE_NAME:?INSTANCE_NAME not set}-gancio-entrypoint-${ENTRYPOINT_VERSION:-2}
     file: ./scripts/entrypoint.sh
 
 services:
@@ -76,6 +76,15 @@ services:
       DB_NAME: ${DB_NAME:-gancio}
       DB_USER: ${DB_USER:-gancio}
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      # Mail is off unless SMTP_HOST is set; the entrypoint omits the block
+      # entirely rather than writing a blank one. ADMIN_EMAIL is the From
+      # address and is required alongside it.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
     configs:
       - source: gancio_entrypoint
         target: /entrypoint.sh
