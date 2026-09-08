@@ -206,6 +206,27 @@ services:
   #
   # Waits for the install rather than racing it, because Swarm ignores
   # depends_on ordering.
+  #
+  # --timeout IS NOT OPTIONAL, AND ITS DEFAULT OF 0 IS A TRAP. `occ
+  # taskprocessing:worker` is a long-lived PHP process, and IAppConfig is cached
+  # for the life of that process. A worker started before a config change goes on
+  # using the values it booted with, forever, while `occ config:app:get` in any
+  # other container reports the new ones -- so the config reads as applied and is
+  # not. Upstream says so in the command's own help text: "You should regularly
+  # (e.g. every 5 minutes) restart this worker by using this option to make sure
+  # it picks up configuration changes."
+  #
+  # Measured on production 2026-09-08. init.sh set stt_request_timeout=14400 on
+  # 09-07. The worker had been up since 09-01 23:09 -- six days, PID 1 -- so it
+  # still held the app default of 240 s (OPENAI_DEFAULT_REQUEST_TIMEOUT = 60 * 4).
+  # The 09-08 ops meeting transcribed for exactly 241 s and died: cURL error 28,
+  # "0 bytes received", while stt-proxy had already transcoded 186 MB -> 73 MB and
+  # was mid-answer. The transcript was lost to a setting that had been correct in
+  # the database for a day. Restarting the worker and re-scheduling produced it.
+  #
+  # 300 s bounds the staleness. restart_policy above is `condition: any`, so Swarm
+  # respawns the worker 10 s after each exit; a task already running is finished
+  # before the timeout is honoured, so this never truncates a transcription.
   taskworker:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
     entrypoint: ["/bin/sh", "-c"]
@@ -215,6 +236,7 @@ services:
         do echo '[taskworker] waiting for install'; sleep 10; done;
         echo '[taskworker] starting';
         exec php /var/www/html/occ taskprocessing:worker
+        --timeout=${TASKWORKER_TIMEOUT:-300}
     user: www-data
     working_dir: /var/www/html
     volumes:
