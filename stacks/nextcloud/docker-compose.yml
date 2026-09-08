@@ -45,7 +45,7 @@ configs:
     file: ./scripts/init.sh
   stt_proxy_py:
     # Same rule: bump when the proxy script changes or the old one keeps running.
-    name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_1}
+    name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_2}
     file: ./scripts/stt-prompt-proxy.py
   share_recordings_php:
     # Same rule: bump when the script changes or the old one keeps running.
