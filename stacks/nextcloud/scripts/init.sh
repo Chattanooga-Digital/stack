@@ -9,6 +9,26 @@ die() { printf '[init] %s\n' "$*" >&2; exit 1; }
 cd /var/www/html
 occ() { php occ "$@"; }
 
+# `occ config:app:set --lazy` asks "Confirm this action by typing 'yes'" and, with
+# no answer, prints "Aborted." and exits non-zero -- which under `set -e` kills the
+# deploy. --no-interaction does NOT help: it returns the question's default, which
+# is no. So the confirmation has to be answered explicitly.
+#
+# Then verify, because this is a setting whose whole failure mode is looking
+# applied while not being read: a lazy key written non-lazily is silently invisible
+# to a reader that asks for it lazily. See the long note at the STT timeouts below.
+occ_set_lazy() { # app key value
+  printf 'yes\n' | occ config:app:set "$1" "$2" --value="$3" --lazy >/dev/null 2>&1 || true
+  # Assert the FLAG, not the presence of the key. `config:app:get` succeeds just
+  # as happily on the non-lazy row this function exists to prevent, so checking
+  # that the key exists would pass in exactly the broken case. --details is the
+  # only output that carries the flag. Its JSON also carries the value, so it is
+  # matched against, never printed.
+  occ config:app:get "$1" "$2" --details --output=json 2>/dev/null \
+    | grep -q '"lazy":true' \
+    || die "$1/$2 is still stored non-lazy; the app reads it lazily and will ignore it"
+}
+
 TALK_ENABLED="${TALK_ENABLED:-true}"
 SMTP_HOST="${SMTP_HOST:-smtp.resend.com}"
 SMTP_PORT="${SMTP_PORT:-587}"
@@ -127,15 +147,37 @@ occ config:app:set dav createExampleContact --value=yes >/dev/null
 # the same fake-data problem with nothing better to put in its place.
 occ config:app:set dav createExampleEvent --value=no >/dev/null
 
-# Speech-to-text timeouts. `stt_request_timeout` is a SEPARATE setting from
-# `request_timeout`, and only the former governs transcription. Setting the
-# obvious-looking one changes nothing, which cost two wrong turns on 2026-09-01
-# while every attempt died at exactly 240 seconds, the shared default.
+# --lazy IS LOAD-BEARING ON EVERY LINE THAT HAS IT. A key written non-lazily but
+# READ with `lazy: true` is not found, and the reader silently gets its default.
+# Nothing errors. `occ config:app:get` prints the value you set, the database
+# holds it, and the app never sees it -- so the setting reads as applied from
+# every angle except the only one that matters.
+#
+# `occ config:app:set` writes non-lazy unless told otherwise; integration_openai's
+# admin panel writes lazy. So a value set here and a value set in the UI are not
+# the same row, and only the UI's version is ever read.
+#
+# Measured on production 2026-09-08, after an ops meeting was lost:
+#
+#   key                    stored   read     effect
+#   url                    non-lazy non-lazy OK, which is why requests DID reach stt-proxy
+#   stt_url                non-lazy LAZY     ignored -> sttOverrideEnabled() false
+#   request_timeout        non-lazy LAZY     ignored -> 240 s (OPENAI_DEFAULT_REQUEST_TIMEOUT)
+#   default_stt_model_id   non-lazy LAZY     ignored -> upstream's default model
+#
+# Because stt_url was invisible, the STT branch was never taken, so the correctly
+# stored stt_request_timeout was never consulted either. Every transcription died
+# at exactly 240 s with "0 bytes received" while stt-proxy was still working.
+# An earlier comment here blamed the wrong setting; the setting was fine and the
+# write was wrong.
+#
+# The rule: match --lazy to how the app reads the key. Check before adding one:
+#   grep -r "APP_ID, 'the_key'" custom_apps/<app>/lib/ | grep 'lazy: true'
 #
 # whisper-base on CPU took 7 minutes for a 1-hour recording. Two hours is the
 # planning ceiling, so 4 hours of headroom is deliberate rather than arbitrary.
-occ config:app:set integration_openai stt_request_timeout --value="${STT_REQUEST_TIMEOUT:-14400}" >/dev/null
-occ config:app:set integration_openai request_timeout --value="${STT_REQUEST_TIMEOUT:-14400}" >/dev/null
+occ_set_lazy integration_openai stt_request_timeout "${STT_REQUEST_TIMEOUT:-14400}"
+occ_set_lazy integration_openai request_timeout "${STT_REQUEST_TIMEOUT:-14400}"
 
 # The card itself lives in appdata (dav/defaultContact/defaultContact.vcf) with
 # `hasCustomDefaultContact` in appconfig, so it survives ordinary redeploys. It is NOT
@@ -272,10 +314,10 @@ if [ "$TALK_ENABLED" = true ]; then
       occ config:app:set integration_openai url --value="${LOCALAI_URL:-http://localai:8080/v1}" >/dev/null
       # Point STT at the prompt-injecting proxy, not LocalAI directly. Without
       # the prompt, base-en garbled the co-op's own name on three runs of four.
-      occ config:app:set integration_openai stt_url --value="${LOCALAI_STT_URL:-http://stt-proxy:9040/v1}" >/dev/null
-      occ config:app:set integration_openai default_stt_model_id --value="${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}" >/dev/null
+      occ_set_lazy integration_openai stt_url "${LOCALAI_STT_URL:-http://stt-proxy:9040/v1}"
+      occ_set_lazy integration_openai default_stt_model_id "${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}"
       occ config:app:set integration_openai stt_provider_enabled --value=1 >/dev/null
-      occ config:app:set integration_openai service_name --value="LocalAI (self-hosted)" >/dev/null
+      occ_set_lazy integration_openai service_name "LocalAI (self-hosted)"
       log "transcription provider: LocalAI ${LOCALAI_STT_MODEL:-whisper-base-en-q5_1} at ${LOCALAI_URL:-http://localai:8080/v1}"
 
       # Without an explicit preference Nextcloud picks the first registered
