@@ -41,7 +41,7 @@ networks:
 configs:
   init_sh:
     # Bump when init.sh changes; Swarm configs are immutable.
-    name: ${INIT_CONFIG_NAME:-nextcloud_init_1}
+    name: ${INIT_CONFIG_NAME:-nextcloud_init_2}
     file: ./scripts/init.sh
   stt_proxy_py:
     # Same rule: bump when the proxy script changes or the old one keeps running.
@@ -51,6 +51,14 @@ configs:
     # Same rule: bump when the script changes or the old one keeps running.
     name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_2}
     file: ./scripts/share-recordings.php
+  taskworker_sh:
+    # Same rule: bump when the script changes or the old one keeps running.
+    name: ${TASKWORKER_CONFIG_NAME:-nextcloud_taskworker_1}
+    file: ./scripts/taskworker.sh
+  recording_share_sh:
+    # Same rule: bump when the script changes or the old one keeps running.
+    name: ${RECORDING_SHARE_SH_CONFIG_NAME:-nextcloud_recording_share_sh_1}
+    file: ./scripts/recording-share.sh
 
 volumes:
   localai_backends:
@@ -207,42 +215,21 @@ services:
   # Waits for the install rather than racing it, because Swarm ignores
   # depends_on ordering.
   #
-  # --timeout IS NOT OPTIONAL, AND ITS DEFAULT OF 0 IS A TRAP. `occ
-  # taskprocessing:worker` is a long-lived PHP process, and IAppConfig is cached
-  # for the life of that process. A worker started before a config change goes on
-  # using the values it booted with, forever, while `occ config:app:get` in any
-  # other container reports the new ones -- so the config reads as applied and is
-  # not. Upstream says so in the command's own help text: "You should regularly
-  # (e.g. every 5 minutes) restart this worker by using this option to make sure
-  # it picks up configuration changes."
-  #
-  # Measured on production 2026-09-08. init.sh set stt_request_timeout=14400 on
-  # 09-07. The worker had been up since 09-01 23:09 -- six days, PID 1 -- so it
-  # still held the app default of 240 s (OPENAI_DEFAULT_REQUEST_TIMEOUT = 60 * 4).
-  # The 09-08 ops meeting transcribed for exactly 241 s and died: cURL error 28,
-  # "0 bytes received", while stt-proxy had already transcoded 186 MB -> 73 MB and
-  # was mid-answer. The transcript was lost to a setting that had been correct in
-  # the database for a day. Restarting the worker and re-scheduling produced it.
-  #
-  # 300 s bounds the staleness. restart_policy above is `condition: any`, so Swarm
-  # respawns the worker 10 s after each exit; a task already running is finished
-  # before the timeout is honoured, so this never truncates a transcription.
+  # Why --timeout matters, and what it cost: scripts/taskworker.sh.
   taskworker:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >-
-        until php /var/www/html/occ status 2>/dev/null | grep -q 'installed: true';
-        do echo '[taskworker] waiting for install'; sleep 10; done;
-        echo '[taskworker] starting';
-        exec php /var/www/html/occ taskprocessing:worker
-        --timeout=${TASKWORKER_TIMEOUT:-300}
+    entrypoint: ["/bin/sh", "/config/taskworker.sh"]
     user: www-data
     working_dir: /var/www/html
     volumes:
       - nextcloud_html:/var/www/html
+    configs:
+      - source: taskworker_sh
+        target: /config/taskworker.sh
+        mode: 0444
     environment:
       TZ: ${TZ:-America/New_York}
+      TASKWORKER_TIMEOUT: ${TASKWORKER_TIMEOUT:-300}
       # A two-hour recording through whisper-base on CPU runs long. PHP's own
       # limit has to outlast the HTTP call the worker is making.
       PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-1G}
@@ -282,16 +269,7 @@ services:
   # ordering.
   recording-share:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >-
-        until php /var/www/html/occ status 2>/dev/null | grep -q 'installed: true';
-        do echo '[recording-share] waiting for install'; sleep 10; done;
-        echo '[recording-share] watching, interval ${RECORDING_SHARE_INTERVAL:-120}s';
-        while true; do
-        php /config/share-recordings.php --apply || echo '[recording-share] run failed';
-        sleep ${RECORDING_SHARE_INTERVAL:-120};
-        done
+    entrypoint: ["/bin/sh", "/config/recording-share.sh"]
     user: www-data
     working_dir: /var/www/html
     volumes:
@@ -300,9 +278,13 @@ services:
       - source: share_recordings_php
         target: /config/share-recordings.php
         mode: 0444
+      - source: recording_share_sh
+        target: /config/recording-share.sh
+        mode: 0444
     environment:
       TZ: ${TZ:-America/New_York}
       RECORDING_AUTOSHARE: ${RECORDING_AUTOSHARE:-1}
+      RECORDING_SHARE_INTERVAL: ${RECORDING_SHARE_INTERVAL:-120}
       # Don't publish a file that is still being written. The recording upload and
       # the transcript are written at different times; this is the margin.
       STT_SHARE_MIN_AGE: ${STT_SHARE_MIN_AGE:-120}
