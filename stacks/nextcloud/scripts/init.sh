@@ -222,7 +222,11 @@ occ_set_lazy integration_openai request_timeout "${STT_REQUEST_TIMEOUT:-14400}"
 #   curl -u "$ADMIN_USER:$ADMIN_PASSWORD" -X PUT \
 #     "https://$DOMAIN/apps/dav/api/defaultcontact/contact" \
 #     -H 'Content-Type: application/json' \
-#     --data "{\"contactData\": \"$(sed -z 's/\n/\\n/g' contact.vcf)\"}"
+#     --data "{\"contactData\": \"$(sed -z 's/\n/\\n/g' files/defaultContact.vcf)\"}"
+#
+# That file is stacks/nextcloud/files/defaultContact.vcf in this repo. It is the
+# card's content and nothing applies it automatically, for the reason above --
+# so it is an input to the command here, not dead weight.
 #
 # Verify by creating an account, logging in once (the address book is created on FIRST
 # LOGIN, not at creation -- checking straight after `user:add` shows no addressbooks and
