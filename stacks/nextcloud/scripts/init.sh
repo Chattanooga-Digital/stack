@@ -29,7 +29,22 @@ occ_set_lazy() { # app key value
     || die "$1/$2 is still stored non-lazy; the app reads it lazily and will ignore it"
 }
 
+# EVERY optional guard and every optional secret gets a default HERE, not at the
+# point of use. Two reasons, and the second one is a real bug this had:
+#
+#   1. `set -u` is on. A bare "$RECORDING_SECRET" that is never exported kills
+#      the whole script -- "parameter not set" -- so turning recording OFF broke
+#      provisioning entirely, which is the opposite of what a disable should do.
+#   2. Guards written three different ways read as three different intentions.
+#      TALK_ENABLED was declared and validated; RECORDING_ENABLED and
+#      LOCALAI_ENABLED were bare `${VAR:-true}` at their single point of use.
+#
+# So: declared together, validated together, used bare below.
 TALK_ENABLED="${TALK_ENABLED:-true}"
+RECORDING_ENABLED="${RECORDING_ENABLED:-true}"
+LOCALAI_ENABLED="${LOCALAI_ENABLED:-true}"
+RECORDING_SECRET="${RECORDING_SECRET:-}"
+STT_SECRET="${STT_SECRET:-}"
 SMTP_HOST="${SMTP_HOST:-smtp.resend.com}"
 SMTP_PORT="${SMTP_PORT:-587}"
 SMTP_USER="${SMTP_USER:-resend}"
@@ -38,7 +53,12 @@ TURN_PORT="${TURN_PORT:-3478}"
 ADMIN_ACCOUNTS="${ADMIN_ACCOUNTS:-}"
 MEMBER_ACCOUNTS="${MEMBER_ACCOUNTS:-}"
 EXTRA_APPS="${EXTRA_APPS:-}"
-case "$TALK_ENABLED" in true|false) ;; *) die "TALK_ENABLED must be true or false" ;; esac
+check_bool() { # name value
+  case "$2" in true|false) ;; *) die "$1 must be true or false, got '$2'" ;; esac
+}
+check_bool TALK_ENABLED "$TALK_ENABLED"
+check_bool RECORDING_ENABLED "$RECORDING_ENABLED"
+check_bool LOCALAI_ENABLED "$LOCALAI_ENABLED"
 
 # Nextcloud builds the sender as <from>@<domain>, so a full address here yields
 # no-reply@x@x and every message is silently dropped.
@@ -285,7 +305,7 @@ if [ "$TALK_ENABLED" = true ]; then
   #
   # isRecordingEnabled() also wants signaling mode != internal, which the block
   # above has just satisfied.
-  if [ "${RECORDING_ENABLED:-true}" = true ] && [ -n "$RECORDING_SECRET" ]; then
+  if [ "$RECORDING_ENABLED" = true ] && [ -n "$RECORDING_SECRET" ]; then
     occ config:app:set spreed recording_servers --value \
       "{\"servers\":[{\"server\":\"${RECORDING_URL:-http://talk-recording:1234}\",\"verify\":false}],\"secret\":\"$RECORDING_SECRET\"}" >/dev/null
     occ config:app:set spreed call_recording --value yes >/dev/null
@@ -342,7 +362,7 @@ if [ "$TALK_ENABLED" = true ]; then
     # against 16.3 GB of CUDA libraries and a 3.87 GB peak on a host with no GPU.
     # Both stay registered; the preference below is one config value, so swapping
     # engines is a config change rather than a redeploy.
-    if [ "${LOCALAI_ENABLED:-true}" = true ]; then
+    if [ "$LOCALAI_ENABLED" = true ]; then
       # `|| true` is load-bearing under `set -eu`: app:install is NOT idempotent
       # and errors when the app is already present, which aborted the whole
       # script on production 2026-08-30 -- silently, because the failure was
