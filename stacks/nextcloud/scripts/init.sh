@@ -152,19 +152,20 @@ occ db:add-missing-indices >/dev/null
 # TRUSTED_PROXIES IS SPACE-SEPARATED, AND COMMAS FAIL SILENTLY. The official
 # image builds the array itself:
 #
-#   $CONFIG['trusted_proxies'] = array_filter(array_map('trim', explode(' ', $trustedProxies)));
+#   $CONFIG['trusted_proxies'] = array_filter(array_map('trim', explode(' ', $tp)));
 #
-# so "10.0.0.0/8,172.16.0.0/12" is ONE element that matches no proxy. Nothing
-# errors; proxy trust is simply off, REMOTE_ADDR is Traefik for every request,
-# and rate limiting, brute-force protection and every logged client IP are wrong.
-# Found on production 2026-09-08: three CIDRs, one 39-character element.
+# so "10.0.0.0/8,172.16.0.0/12" is ONE element matching no proxy. Proxy trust is
+# then simply off: REMOTE_ADDR is Traefik for every request, and rate limiting,
+# brute-force protection and every logged client IP are wrong. Measured on
+# production 2026-09-08 as three CIDRs in a single 39-character entry.
 #
-# Checked against the INSTALLED config rather than the variable, because the
-# variable is the app service's and this container may not even receive it.
-if occ config:system:get trusted_proxies >/dev/null 2>&1; then
-  bad="$(occ config:system:get trusted_proxies 2>/dev/null | grep -c ',' || true)"
-  [ "${bad:-0}" -eq 0 ] || die "trusted_proxies contains a comma: TRUSTED_PROXIES must be SPACE-separated, or the image collapses it into one entry that matches nothing"
-fi
+# THERE IS DELIBERATELY NO CHECK HERE, and the reason is worth writing down.
+# reverse-proxy.config.php is a STATIC file in the image that calls
+# getenv('TRUSTED_PROXIES') at runtime, so the effective value depends on which
+# container is asking. The app service has the variable; this one does not. A
+# check here therefore reads a different, staler value than the web server uses
+# -- it crash-looped staging on 2026-09-08 while the app's own value was already
+# correct. The assertion has to run against the app container, not here.
 
 # Nextcloud seeds every NEW account with a sample contact on first login, so Contacts is
 # not an empty screen that reads as broken. The stock card is "Leon Green, Manager at
