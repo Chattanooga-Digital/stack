@@ -126,3 +126,23 @@ yet. So whoever deploys this branch to production sets, in the stack environment
 
 A git-backed stack cannot take an environment-only update, so the bump and the redeploy
 are one action, not two.
+
+### The same redeploy should correct `TRUSTED_PROXIES`
+
+Production's value is **comma-separated**: 39 characters holding three CIDRs and no
+spaces, re-measured 2026-09-10. The image builds the array with
+`explode(' ', $tp)`, so that is one entry matching no proxy, and proxy trust is simply
+off — `REMOTE_ADDR` is Traefik for every request, which is what rate limiting,
+brute-force protection and every logged client IP are keyed on.
+
+Re-separating the same three CIDRs with spaces fixes it. Nothing else changes, and it
+costs nothing extra because a git-backed stack has to be redeployed to take the config
+names above anyway.
+
+To check the shape without printing the value:
+
+```sh
+curl -fsS "$PORTAINER/api/stacks/99" -H "Authorization: Bearer $JWT" \
+  | jq -r '.Env[] | select(.name=="TRUSTED_PROXIES") | .value' \
+  | grep -qa ',' && echo 'comma-separated: proxy trust is OFF'
+```
