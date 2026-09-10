@@ -74,3 +74,55 @@ stack already uses for `stt_whisper2` applies. Nobody has tested that. Full reas
 and the separate question of `stt_whisper2` sitting at 0 replicas:
 `cd-nextcloud/docs/NEXTCLOUD.md` → *Meeting transcripts, and why NOT "Live transcription"*.
 
+
+## Changing a script means bumping its config name
+
+Every script this stack ships — `init.sh`, `taskworker.sh`, `recording-share.sh`,
+`stt-prompt-proxy.py`, `share-recordings.php` — reaches its container as a Swarm
+**config**, and Swarm configs are **immutable**. Editing the file changes nothing on its
+own: the name is the identity, so a redeploy that finds an existing config under the
+same name keeps the **old** content and reports success.
+
+So a script change is two edits, not one:
+
+1. the file, and
+2. `name:` for its config in `docker-compose.yml` — **and every stack environment that
+   overrides that name**.
+
+Missing the second half is silent in the direction that matters. The deploy goes green
+and the container runs the previous script.
+
+**Names are cluster-scoped, not stack-scoped.** Three Nextcloud stacks share the
+production Swarm, so the defaults here (`nextcloud_*`) would be shared between them if
+two stacks ever took the default at once. Production therefore pins its own prefix —
+`cdcloud_init_14`, `cdcloud_stt_proxy_4`, `cdcloud_share_recordings_2` — and any new
+config added to this stack should be pinned the same way rather than left on the
+default.
+
+### Checking a pin before you deploy
+
+Compare what the Swarm holds under the pinned name against the file in the repo. Equal
+hashes mean the redeploy is a no-op for that script; different hashes mean the pin is
+stale and must be bumped in the stack environment first.
+
+```sh
+# for one config: <pinned name> vs <repo file>
+curl -fsS "$PORTAINER/api/endpoints/$EP/docker/configs" -H "Authorization: Bearer $JWT" \
+  | jq -r --arg n "$NAME" '.[] | select(.Spec.Name==$n) | .Spec.Data' \
+  | base64 -d | sha256sum
+sha256sum stacks/nextcloud/scripts/init.sh
+```
+
+**Measured on production 2026-09-10:** `cdcloud_init_14` holds content that no longer
+matches `scripts/init.sh`, while `cdcloud_stt_proxy_4` and `cdcloud_share_recordings_2`
+both match. `taskworker.sh` and `recording-share.sh` are new and exist under no name
+yet. So whoever deploys this branch to production sets, in the stack environment:
+
+| variable | set to | why |
+|---|---|---|
+| `INIT_CONFIG_NAME` | `cdcloud_init_15` | current pin is stale |
+| `TASKWORKER_CONFIG_NAME` | `cdcloud_taskworker_1` | new; keep off the shared default |
+| `RECORDING_SHARE_SH_CONFIG_NAME` | `cdcloud_recording_share_sh_1` | new; same reason |
+
+A git-backed stack cannot take an environment-only update, so the bump and the redeploy
+are one action, not two.
