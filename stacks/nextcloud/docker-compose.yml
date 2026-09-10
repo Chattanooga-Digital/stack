@@ -59,6 +59,10 @@ configs:
     # Same rule: bump when the script changes or the old one keeps running.
     name: ${RECORDING_SHARE_SH_CONFIG_NAME:-nextcloud_recording_share_sh_1}
     file: ./scripts/recording-share.sh
+  stt_proxy_entrypoint_sh:
+    # Same rule: bump when the script changes or the old one keeps running.
+    name: ${STT_PROXY_ENTRYPOINT_CONFIG_NAME:-nextcloud_stt_proxy_entrypoint_1}
+    file: ./scripts/stt-proxy-entrypoint.sh
 
 volumes:
   localai_backends:
@@ -626,21 +630,16 @@ services:
   # parsing and rebuilding it, so it cannot corrupt the audio payload.
   stt-proxy:
     image: ${STT_PROXY_IMAGE:-python}:${STT_PROXY_PYTHON_VERSION:-3.13-alpine}
-    # ffmpeg is what makes this a transcoder rather than a relay. Installed at
-    # start rather than baked into an image, because building and hosting one for
-    # sixty lines of Python costs more than it saves. If the install fails the
-    # proxy still starts and reports ffmpeg=MISSING rather than dying quietly.
-    command:
-      - /bin/sh
-      - -c
-      - apk add --no-cache ffmpeg >/dev/null 2>&1 || echo "[stt-proxy] ffmpeg install FAILED";
-        exec python3 /proxy.py
+    entrypoint: ["/bin/sh", "/config/stt-proxy-entrypoint.sh"]
     volumes:
       - stt_scratch:/scratch
     configs:
       - source: stt_proxy_py
         target: /proxy.py
         mode: 0555
+      - source: stt_proxy_entrypoint_sh
+        target: /config/stt-proxy-entrypoint.sh
+        mode: 0444
     environment:
       UPSTREAM: ${LOCALAI_INTERNAL_URL:-http://localai:8080}
       LISTEN_PORT: "9040"

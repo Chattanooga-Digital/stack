@@ -123,6 +123,7 @@ yet. So whoever deploys this branch to production sets, in the stack environment
 | `INIT_CONFIG_NAME` | `cdcloud_init_15` | current pin is stale |
 | `TASKWORKER_CONFIG_NAME` | `cdcloud_taskworker_1` | new; keep off the shared default |
 | `RECORDING_SHARE_SH_CONFIG_NAME` | `cdcloud_recording_share_sh_1` | new; same reason |
+| `STT_PROXY_ENTRYPOINT_CONFIG_NAME` | `cdcloud_stt_proxy_entrypoint_1` | new; same reason |
 
 A git-backed stack cannot take an environment-only update, so the bump and the redeploy
 are one action, not two.
