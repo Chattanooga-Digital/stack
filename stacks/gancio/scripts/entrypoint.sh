@@ -18,50 +18,28 @@ mkdir -p "$DATA/uploads" "$DATA/logs" "$DATA/user_locale"
 : "${GANCIO_BASEURL:?GANCIO_BASEURL not set}"
 : "${DB_PASSWORD:?DB_PASSWORD not set}"
 
-# Gancio has no SMTP environment variables. server/api/controller/settings.js
-# seeds its live settings from this file -- `admin_email: config.admin_email ||
-# ''` and `smtp: config.smtp || {}` -- and thereafter reads the `settings` table,
-# so a value saved in the admin panel wins over this one. That layering is
-# deliberate: this is the reproducible default a rebuild restores, not a lock on
-# what the site owner may change.
+# MAIL IS NOT SEEDED FROM HERE. It is set in Administration > Settings, which is
+# gancio's supported place for it, and this file deliberately does not pre-empt
+# that. An earlier version wrote `admin_email` and `smtp` into the config so a
+# rebuild from empty volumes came back with mail on; that is the cost of the
+# rule, and the cost is accepted rather than worked around.
 #
-# Emitted only when SMTP_HOST is set, because a half-filled block is worse than
-# none. mail.js builds its nodemailer transport from `settings.smtp || {}`, and
-# the guard that warns about unconfigured mail is `!settings.smtp` -- which an
-# empty object passes. A blank host would therefore boot clean and fail at send.
-MAIL_JSON=""
-if [ -n "${SMTP_HOST:-}" ]; then
-  : "${ADMIN_EMAIL:?ADMIN_EMAIL not set (gancio sends as this address)}"
-  SMTP_PORT="${SMTP_PORT:-587}"
+# The consequence to know: a fresh volume comes up with mail off, so password
+# resets and confirmations silently do nothing until someone fills the panel in.
 
-  # 465 is implicit TLS, 587 is STARTTLS. Defaulted off the port so the two
-  # common cases need no second variable, still overridable for the third.
-  if [ "$SMTP_PORT" = "465" ]; then
-    SMTP_SECURE="${SMTP_SECURE:-true}"
-  else
-    SMTP_SECURE="${SMTP_SECURE:-false}"
-  fi
-
-  # A quote or backslash in a value would produce invalid JSON, and gancio
-  # reports that as a parse error against a file nobody can see. Fail here with
-  # the reason instead.
-  case "${SMTP_PASSWORD:-}${SMTP_USER:-}${ADMIN_EMAIL}" in
-    *'"'*|*\\*)
-      echo "FATAL: SMTP_USER/SMTP_PASSWORD/ADMIN_EMAIL cannot contain a quote or backslash" >&2
-      exit 1 ;;
-  esac
-
-  MAIL_JSON=$(cat <<MAILJSON
-  "admin_email": "${ADMIN_EMAIL}",
-  "smtp": {
-    "host": "${SMTP_HOST}",
-    "port": ${SMTP_PORT},
-    "secure": ${SMTP_SECURE},
-    "auth": { "user": "${SMTP_USER:-}", "pass": "${SMTP_PASSWORD:-}" }
-  },
-MAILJSON
-)
-fi
+# Everything interpolated below lands inside a JSON document. A quote or a
+# backslash in any of it produces a file gancio can only report as a parse error,
+# against a path nobody can read. Fail here, with the reason, instead.
+#
+# This check used to cover only the SMTP values and went away with them. The
+# password is the one that actually matters -- it is arbitrary, it is the value
+# most likely to contain punctuation, and Portainer is documented as mangling
+# `%`, `*` and `$` in env values already.
+case "${DB_PASSWORD}${GANCIO_BASEURL}${DB_USER:-}${DB_NAME:-}" in
+  *'"'*|*\\*)
+    echo "FATAL: DB_PASSWORD/GANCIO_BASEURL/DB_USER/DB_NAME cannot contain a quote or backslash" >&2
+    exit 1 ;;
+esac
 
 HOSTNAME_ONLY=$(printf '%s' "$GANCIO_BASEURL" | sed -e 's|^https\{0,1\}://||' -e 's|/.*$||')
 
@@ -81,7 +59,6 @@ cat > /config.json <<JSON
     "password": "${DB_PASSWORD}",
     "logging": false
   },
-${MAIL_JSON}
   "user_locale": "${DATA}/user_locale",
   "upload_path": "${DATA}/uploads"
 }
