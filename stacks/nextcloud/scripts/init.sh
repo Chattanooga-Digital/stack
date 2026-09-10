@@ -60,6 +60,21 @@ check_bool TALK_ENABLED "$TALK_ENABLED"
 check_bool RECORDING_ENABLED "$RECORDING_ENABLED"
 check_bool LOCALAI_ENABLED "$LOCALAI_ENABLED"
 
+# THE IMAGE SPLITS trusted_proxies ON SPACES: reverse-proxy.config.php does
+# array_filter(array_map('trim', explode(' ', getenv('TRUSTED_PROXIES')))). A
+# comma-separated value is therefore ONE entry matching no proxy, proxy trust is
+# off, and REMOTE_ADDR is the reverse proxy for every request -- so rate limiting,
+# brute-force protection and every logged client IP are wrong, silently.
+#
+# This checks the RAW STRING, not the resolved config. An earlier version read
+# `occ config:system:get trusted_proxies` and crash-looped staging, because that
+# resolves per container and this one does not serve HTTP. The string is
+# identical in every container that declares the variable, so checking it here is
+# sound in a way that checking the effective value never was.
+case "${TRUSTED_PROXIES:-}" in
+  *,*) die "TRUSTED_PROXIES is comma-separated; the image splits on SPACES, so this silently disables proxy trust. Use: TRUSTED_PROXIES='10.0.0.0/8 172.16.0.0/12'" ;;
+esac
+
 # Nextcloud builds the sender as <from>@<domain>, so a full address here yields
 # no-reply@x@x and every message is silently dropped.
 case "$MAIL_FROM" in *@*) die "MAIL_FROM is the local part only, got '$MAIL_FROM'" ;; esac
@@ -346,6 +361,11 @@ if [ "$TALK_ENABLED" = true ]; then
           || log "WARN stt_whisper2 registration failed -- is it up on ${STT_HOST:-stt-whisper2}:${STT_PORT:-9030}?"
       fi
       occ app:enable stt_whisper2 >/dev/null 2>&1 || true
+    else
+      # Genuinely optional -- stt_whisper2 defaults to 0 replicas -- but say so.
+      # An optional step that skips in silence is indistinguishable from one that
+      # ran and did nothing.
+      log "stt_whisper2: no STT_SECRET, skipping provider registration"
     fi
 
     # LocalAI (whisper.cpp) as the transcription provider, reached through
@@ -400,6 +420,14 @@ if [ "$TALK_ENABLED" = true ]; then
         log "WARN could not reach LocalAI at $_lb to install $_lm"
       fi
     fi
+  elif [ "$RECORDING_ENABLED" = true ]; then
+    # Booting clean when the secrets do not exist yet is deliberate, so this must
+    # NOT be fatal -- see the matching comment in the compose file. But it was
+    # also completely silent: the flag asked for recording, the deploy reported
+    # success, and nothing recorded, transcribed or registered a provider. An
+    # operator cannot tell that apart from a feature that ran and did nothing,
+    # which is the failure mode this whole file exists to remove.
+    log "WARN recording enabled but RECORDING_SECRET is empty -- recording, transcription and the STT provider are all UNCONFIGURED"
   fi
 
   # recording_consent is deliberately NOT set. Whether members are asked before
