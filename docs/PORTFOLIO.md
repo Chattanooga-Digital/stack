@@ -90,6 +90,7 @@ decision).
 | [BigCapital](portfolio/bigcapital.md) | Pilot | Ready | FROZEN |
 | [Hubzilla](portfolio/hubzilla.md) | Pilot | Absent | EVAL |
 | [Keycloak](portfolio/keycloak.md) | Proposed | Absent | EVAL |
+| [Funkwhale](portfolio/funkwhale.md) | Proposed | Ready | EVAL |
 
 Adding a platform: copy the shape of an existing page into
 `portfolio/<name>.md`, add a row above, and remove the name from the inventory
