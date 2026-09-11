@@ -38,29 +38,26 @@ networks:
     driver: overlay
     attachable: false
 
+# Swarm configs are immutable, so a changed script needs a changed name: bump the
+# matching _CONFIG_NAME in the same commit or the old content keeps running while
+# the deploy reports success. Applies to every entry below.
 configs:
   init_sh:
-    # Bump when init.sh changes; Swarm configs are immutable.
     name: ${INIT_CONFIG_NAME:-nextcloud_init_6}
     file: ./scripts/init.sh
   stt_proxy_py:
-    # Same rule: bump when the proxy script changes or the old one keeps running.
     name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_2}
     file: ./scripts/stt-prompt-proxy.py
   share_recordings_php:
-    # Same rule: bump when the script changes or the old one keeps running.
     name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_2}
     file: ./scripts/share-recordings.php
   taskworker_sh:
-    # Same rule: bump when the script changes or the old one keeps running.
     name: ${TASKWORKER_CONFIG_NAME:-nextcloud_taskworker_1}
     file: ./scripts/taskworker.sh
   recording_share_sh:
-    # Same rule: bump when the script changes or the old one keeps running.
     name: ${RECORDING_SHARE_SH_CONFIG_NAME:-nextcloud_recording_share_sh_1}
     file: ./scripts/recording-share.sh
   stt_proxy_entrypoint_sh:
-    # Same rule: bump when the script changes or the old one keeps running.
     name: ${STT_PROXY_ENTRYPOINT_CONFIG_NAME:-nextcloud_stt_proxy_entrypoint_1}
     file: ./scripts/stt-proxy-entrypoint.sh
 
