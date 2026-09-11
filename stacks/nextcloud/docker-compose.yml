@@ -60,6 +60,9 @@ configs:
   stt_proxy_entrypoint_sh:
     name: ${STT_PROXY_ENTRYPOINT_CONFIG_NAME:-nextcloud_stt_proxy_entrypoint_1}
     file: ./scripts/stt-proxy-entrypoint.sh
+  localai_entrypoint_sh:
+    name: ${LOCALAI_ENTRYPOINT_CONFIG_NAME:-nextcloud_localai_entrypoint_1}
+    file: ./scripts/localai-entrypoint.sh
 
 volumes:
   localai_backends:
@@ -509,14 +512,11 @@ services:
     # LocalAI v4 ships an EMPTY /backends, and /v1/models still advertises the
     # model -- so readiness passes and the request fails "backend not found".
     # Installed on start if absent, into a volume. README: "LocalAI backends".
-    entrypoint:
-      - /bin/sh
-      - -c
-      - if [ ! -d /backends/whisper ]; then
-          echo "[localai] installing whisper backend";
-          /local-ai backends install whisper || echo "[localai] whisper backend install FAILED";
-        fi;
-        exec /entrypoint.sh
+    entrypoint: ["/bin/sh", "/config/localai-entrypoint.sh"]
+    configs:
+      - source: localai_entrypoint_sh
+        target: /config/localai-entrypoint.sh
+        mode: 0444
     volumes:
       - localai_models:/models
       - localai_backends:/backends
