@@ -41,7 +41,7 @@ networks:
 configs:
   init_sh:
     # Bump when init.sh changes; Swarm configs are immutable.
-    name: ${INIT_CONFIG_NAME:-nextcloud_init_5}
+    name: ${INIT_CONFIG_NAME:-nextcloud_init_6}
     file: ./scripts/init.sh
   stt_proxy_py:
     # Same rule: bump when the proxy script changes or the old one keeps running.
@@ -355,6 +355,9 @@ services:
       MAIL_DOMAIN: ${MAIL_DOMAIN:?MAIL_DOMAIN not set}
       ADMIN_USER: ${ADMIN_USER:?ADMIN_USER not set}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      # The shared service admin's address. Without it that account cannot be
+      # password-reset and receives no admin alerts.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_ACCOUNTS: ${ADMIN_ACCOUNTS:-}
       MEMBER_ACCOUNTS: ${MEMBER_ACCOUNTS:-}
       EXTRA_APPS: ${EXTRA_APPS:-}

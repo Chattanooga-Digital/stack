@@ -50,6 +50,7 @@ SMTP_PORT="${SMTP_PORT:-587}"
 SMTP_USER="${SMTP_USER:-resend}"
 MAIL_FROM="${MAIL_FROM:-no-reply}"
 TURN_PORT="${TURN_PORT:-3478}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 ADMIN_ACCOUNTS="${ADMIN_ACCOUNTS:-}"
 MEMBER_ACCOUNTS="${MEMBER_ACCOUNTS:-}"
 EXTRA_APPS="${EXTRA_APPS:-}"
@@ -442,6 +443,21 @@ else
   OC_PASS="$ADMIN_PASSWORD" occ user:add --password-from-env --group=admin \
     --display-name="Service Admin" "$ADMIN_USER" >/dev/null
   log "created admin '$ADMIN_USER'"
+fi
+
+# SET OUTSIDE THE CREATE BRANCH ON PURPOSE. The account already exists on every
+# deployed instance, and the branch above deliberately leaves existing accounts
+# alone -- so setting the address only at creation would never reach the one
+# account that actually needs it. occ user:setting is idempotent.
+#
+# Without an address the shared service admin cannot be sent a password reset and
+# receives none of the alerts Nextcloud mails to administrators. It is the account
+# with the most privilege and the least recoverability on the instance.
+if [ -n "$ADMIN_EMAIL" ]; then
+  occ user:setting "$ADMIN_USER" settings email "$ADMIN_EMAIL" >/dev/null
+  log "admin '$ADMIN_USER' email set"
+else
+  log "WARN ADMIN_EMAIL is empty -- '$ADMIN_USER' has no address, so it cannot be password-reset and will receive no admin alerts"
 fi
 
 # uid:Display Name:email, comma separated. Empty means a rebuild comes back with

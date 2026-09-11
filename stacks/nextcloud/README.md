@@ -125,6 +125,12 @@ yet. So whoever deploys this branch to production sets, in the stack environment
 | `RECORDING_SHARE_SH_CONFIG_NAME` | `cdcloud_recording_share_sh_1` | new; same reason |
 | `STT_PROXY_ENTRYPOINT_CONFIG_NAME` | `cdcloud_stt_proxy_entrypoint_1` | new; same reason |
 
+Set `ADMIN_EMAIL` at the same time. The shared service admin (`ADMIN_USER`) is created with
+no address, so it cannot be sent a password reset and receives no administrator alerts — the
+account with the most privilege on the instance and the least way back into it. `init.sh` now
+sets it on every run rather than only at creation, because the account already exists
+everywhere and the create branch deliberately leaves existing accounts alone.
+
 A git-backed stack cannot take an environment-only update, so the bump and the redeploy
 are one action, not two.
 
