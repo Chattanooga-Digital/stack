@@ -67,7 +67,6 @@ configs:
 volumes:
   localai_backends:
   stt_scratch:
-  stt_whisper2_data:
   localai_models:
   nextcloud_html:
     driver: local
@@ -300,10 +299,6 @@ services:
       RECORDING_ENABLED: ${RECORDING_ENABLED:-true}
       RECORDING_SECRET: ${RECORDING_SECRET:-}
       RECORDING_URL: ${RECORDING_URL:-http://talk-recording:1234}
-      STT_SECRET: ${STT_WHISPER2_SECRET:-}
-      STT_HOST: ${STT_WHISPER2_HOST:-stt-whisper2}
-      STT_PORT: ${STT_WHISPER2_PORT:-9030}
-      STT_VERSION: ${STT_WHISPER2_VERSION:-2.5.0}
       LOCALAI_ENABLED: ${LOCALAI_ENABLED:-true}
       LOCALAI_URL: ${LOCALAI_URL:-http://localai:8080/v1}
       LOCALAI_STT_MODEL: ${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}
@@ -461,41 +456,9 @@ services:
           cpus: "${CPU_LIMIT_TALK_RECORDING:-2.0}"
           memory: ${MEM_LIMIT_TALK_RECORDING:-2G}
 
-  # REPLICAS DEFAULTS TO 0 -- this lost its bake-off against LocalAI and stays
-  # only as a comparison switch. STT_WHISPER2_REPLICAS=1 brings it back.
-  # Registered manual-install, never docker-install: that mounts the Docker
-  # socket on a host that is not ours.
-  # README: "Why LocalAI and not stt_whisper2".
-  stt-whisper2:
-    image: ${STT_WHISPER2_IMAGE:-ghcr.io/nextcloud/stt_whisper2}:${STT_WHISPER2_VERSION:-2.5.0}
-    environment:
-      APP_ID: stt_whisper2
-      APP_DISPLAY_NAME: Local Whisper Speech To Text
-      APP_VERSION: ${STT_WHISPER2_VERSION:-2.5.0}
-      APP_HOST: 0.0.0.0
-      APP_PORT: ${STT_WHISPER2_PORT:-9030}
-      # Must equal the "secret" field in the app_api:app:register JSON.
-      APP_SECRET: ${STT_WHISPER2_SECRET:-}
-      APP_PERSISTENT_STORAGE: /nc_app_stt_whisper2_data
-      NEXTCLOUD_URL: https://${DOMAIN}
-      # No NVIDIA hardware on this host despite the CUDA base image.
-      COMPUTE_DEVICE: CPU
-      TZ: ${TZ:-America/New_York}
-    volumes:
-      - stt_whisper2_data:/nc_app_stt_whisper2_data
-    networks:
-      - nextcloud_internal
-    deploy:
-      <<: *deploy-stateless
-      replicas: ${STT_WHISPER2_REPLICAS:-0}
-      resources:
-        limits:
-          cpus: "${CPU_LIMIT_STT:-2.0}"
-          memory: ${MEM_LIMIT_STT:-5G}
-
   # whisper.cpp behind an OpenAI-compatible API: the actual transcription
   # provider. Internal only -- nothing outside the stack should reach an
-  # inference endpoint. README: "Why LocalAI and not stt_whisper2".
+  # inference endpoint. README: "Why LocalAI, and why stt_whisper2 was removed".
   localai:
     image: ${LOCALAI_IMAGE:-localai/localai}:${LOCALAI_VERSION:?LOCALAI_VERSION not set}
     environment:

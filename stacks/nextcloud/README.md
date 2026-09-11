@@ -162,21 +162,36 @@ had the model, the provider was configured, and the job had been "running" for 2
 having never contacted anything. There was nobody to run it. Starting a worker by hand
 moved it in seconds. Why its `--timeout` matters is in `scripts/taskworker.sh`.
 
-## Why LocalAI and not stt_whisper2
+## Why LocalAI, and why stt_whisper2 was removed
 
-Both are transcription providers and only one is worth running here.
+`stt_whisper2` used to be declared here at `replicas: 0`, as a comparison switch. It is gone
+as of 2026-09-11, and the reasoning is worth keeping so nobody re-adds it.
 
-`stt_whisper2` is a **16.3 GB** image of CUDA libraries for a host with **no GPU**. Measured
-on staging it ran at **28x slower than real time** even on its speed-optimised model — about
-28 hours of pegged CPU for a one-hour meeting — and it **OOM-killed at a 5 GB ceiling**
-(exit 137). LocalAI is **0.3 GB**, and its default `whisper-1` model is whisper.cpp's
-quantised `ggml-base.bin` at ~140 MB. `integration_openai` defaults its transcription model
-to exactly that name, so nothing needs configuring to point at it.
+It is a **16.3 GB** image of CUDA libraries for a host with **no GPU**. Measured on staging it
+ran at **28x slower than real time** even on its speed-optimised model — about 28 hours of
+pegged CPU for a one-hour meeting — and it **OOM-killed at a 5 GB ceiling** (exit 137). At
+matched accuracy it was no faster than LocalAI, which is **0.3 GB** and whose default
+`whisper-1` model is whisper.cpp's quantised `ggml-base.bin` at ~140 MB. `integration_openai`
+defaults its transcription model to exactly that name, so nothing needs configuring to reach it.
 
-`stt_whisper2` therefore sits at **`replicas: 0`** and exists only as a comparison switch:
-`STT_WHISPER2_REPLICAS=1`. Both register with AppAPI as `manual-install`, never
-`docker-install` — that form mounts the Docker socket into a container on a host that is not
-ours, and AppAPI's own help calls it deprecated and scheduled for removal in Nextcloud 35.
+Measured 2026-08-29, one 8.33s sample, same node, same 2-core cap:
+
+| engine / model | time | vs real time |
+|---|---|---|
+| `stt_whisper2` large-v3 | 460.8s | 55x — OOM-killed at 5G |
+| `stt_whisper2` large-v3-turbo | 233.9s | 28x |
+| LocalAI small-en-q5_1 | 261.3s | 31x |
+| **LocalAI base-en-q5_1** | **64.3s** | **7.7x** |
+
+It had never run in production: checked 2026-09-11, that instance had **no registered AppAPI
+daemons and no ExApps at all**, so removing it needed no cleanup there.
+
+Its registration also carried a hazard worth remembering. Any ExApp here registers as
+`manual-install`, **never** `docker-install` — that form hands a container the Docker socket on
+a host that is not ours, and AppAPI's own help calls it deprecated and scheduled for removal in
+Nextcloud 35. `init.sh` still removes any `docker-install` daemon it finds, because one was
+registered by hand on production pointing at a container that never existed and logged an error
+on every admin visit to `/settings/apps`.
 
 ### LocalAI backends
 

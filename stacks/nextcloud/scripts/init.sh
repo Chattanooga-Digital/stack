@@ -31,7 +31,6 @@ TALK_ENABLED="${TALK_ENABLED:-true}"
 RECORDING_ENABLED="${RECORDING_ENABLED:-true}"
 LOCALAI_ENABLED="${LOCALAI_ENABLED:-true}"
 RECORDING_SECRET="${RECORDING_SECRET:-}"
-STT_SECRET="${STT_SECRET:-}"
 SMTP_HOST="${SMTP_HOST:-smtp.resend.com}"
 SMTP_PORT="${SMTP_PORT:-587}"
 SMTP_USER="${SMTP_USER:-resend}"
@@ -223,41 +222,17 @@ if [ "$TALK_ENABLED" = true ]; then
     occ config:app:set spreed call_recording_transcription --value yes >/dev/null
     log "talk: recording ${RECORDING_URL:-http://talk-recording:1234}, auto-transcribe on"
 
-    # manual-install, never docker-install (README: "Why LocalAI and not
-    # stt_whisper2"). Cleanup sits OUTSIDE the STT_SECRET guard on purpose --
-    # nested inside, it stopped running at 0 replicas and stale daemons survived.
+    # A docker-install daemon hands a container the Docker socket on a host that
+    # is not ours, and AppAPI's own help calls it deprecated. One was registered
+    # by hand on production pointing at a container that never existed and logged
+    # an error on every admin visit to /settings/apps, so remove any that appear.
     for d in $(occ app_api:daemon:list 2>/dev/null | awk -F'|' '$5 ~ /docker-install/ {gsub(/ /,"",$3); print $3}'); do
       occ app_api:daemon:unregister "$d" >/dev/null 2>&1 \
         && log "removed stale docker-install daemon '$d'" || true
     done
 
-    if [ -n "$STT_SECRET" ]; then
-      if ! occ app_api:daemon:list 2>/dev/null | grep -q manual_install; then
-        occ app_api:daemon:register manual_install "Manual Install" manual-install \
-          http "${STT_HOST:-stt-whisper2}:${STT_PORT:-9030}" "https://$DOMAIN" >/dev/null \
-          && log "registered manual_install deploy daemon"
-      fi
-      if occ app_api:app:list 2>/dev/null | grep -q stt_whisper2; then
-        log "stt_whisper2 already registered"
-      else
-        # Not unregister-then-register: that would drop the downloaded models.
-        occ app_api:app:register stt_whisper2 manual_install --json-info \
-          "{\"id\":\"stt_whisper2\",\"name\":\"Local Whisper Speech To Text\",\"daemon_config_name\":\"manual_install\",\"version\":\"${STT_VERSION:-2.5.0}\",\"secret\":\"$STT_SECRET\",\"host\":\"${STT_HOST:-stt-whisper2}\",\"port\":${STT_PORT:-9030},\"scopes\":[\"AI_PROVIDERS\"],\"system\":true}" \
-          --wait-finish >/dev/null 2>&1 \
-          && log "registered stt_whisper2 speech-to-text provider" \
-          || log "WARN stt_whisper2 registration failed -- is it up on ${STT_HOST:-stt-whisper2}:${STT_PORT:-9030}?"
-      fi
-      occ app:enable stt_whisper2 >/dev/null 2>&1 || true
-    else
-      # Genuinely optional -- stt_whisper2 defaults to 0 replicas -- but say so.
-      # An optional step that skips in silence is indistinguishable from one that
-      # ran and did nothing.
-      log "stt_whisper2: no STT_SECRET, skipping provider registration"
-    fi
-
-    # LocalAI (whisper.cpp) via integration_openai. Both engines stay registered
-    # and the preference below is one config value, so swapping is a config change
-    # rather than a redeploy. README: "Why LocalAI and not stt_whisper2".
+    # LocalAI (whisper.cpp) via integration_openai -- the only transcription
+    # provider now. README: "Why LocalAI, and why stt_whisper2 was removed".
     if [ "$LOCALAI_ENABLED" = true ]; then
       # `|| true` is load-bearing under `set -eu`: app:install is NOT idempotent
       # and errors when the app is already present, which aborted the whole
@@ -274,10 +249,10 @@ if [ "$TALK_ENABLED" = true ]; then
       occ_set_lazy integration_openai service_name "LocalAI (self-hosted)"
       log "transcription provider: LocalAI ${LOCALAI_STT_MODEL:-whisper-base-en-q5_1} at ${LOCALAI_URL:-http://localai:8080/v1}"
 
-      # Without an explicit preference Nextcloud picks the first registered
-      # provider, which was stt_whisper2's LARGEST model AND its "enhanced"
-      # variant -- the slowest possible pairing, and the enhanced one 412s on
-      # every run because it wants a text-generation provider we do not run.
+      # Pin it even though LocalAI is currently the ONLY provider: without an
+      # explicit preference Nextcloud picks whichever registered first, and any
+      # future provider would silently take over transcription. That is how the
+      # slowest possible pairing got chosen once before.
       occ config:app:set core ai.taskprocessing_provider_preferences \
         --value='{"core:audio2text":"integration_openai-audio2text"}' >/dev/null
       log "audio2text preference pinned to integration_openai-audio2text"
