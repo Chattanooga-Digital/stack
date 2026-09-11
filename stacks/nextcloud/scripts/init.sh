@@ -9,14 +9,9 @@ die() { printf '[init] %s\n' "$*" >&2; exit 1; }
 cd /var/www/html
 occ() { php occ "$@"; }
 
-# `occ config:app:set --lazy` asks "Confirm this action by typing 'yes'" and, with
-# no answer, prints "Aborted." and exits non-zero -- which under `set -e` kills the
-# deploy. --no-interaction does NOT help: it returns the question's default, which
-# is no. So the confirmation has to be answered explicitly.
-#
-# Then verify, because this is a setting whose whole failure mode is looking
-# applied while not being read: a lazy key written non-lazily is silently invisible
-# to a reader that asks for it lazily. See the long note at the STT timeouts below.
+# `--lazy` prompts for confirmation and --no-interaction answers NO, so the
+# confirmation is fed in explicitly; then verified, because a mismatched lazy flag
+# fails by looking applied. README: "The --lazy flag is load-bearing".
 occ_set_lazy() { # app key value
   printf 'yes\n' | occ config:app:set "$1" "$2" --value="$3" --lazy >/dev/null 2>&1 || true
   # Assert the FLAG, not the presence of the key. `config:app:get` succeeds just
@@ -29,17 +24,9 @@ occ_set_lazy() { # app key value
     || die "$1/$2 is still stored non-lazy; the app reads it lazily and will ignore it"
 }
 
-# EVERY optional guard and every optional secret gets a default HERE, not at the
-# point of use. Two reasons, and the second one is a real bug this had:
-#
-#   1. `set -u` is on. A bare "$RECORDING_SECRET" that is never exported kills
-#      the whole script -- "parameter not set" -- so turning recording OFF broke
-#      provisioning entirely, which is the opposite of what a disable should do.
-#   2. Guards written three different ways read as three different intentions.
-#      TALK_ENABLED was declared and validated; RECORDING_ENABLED and
-#      LOCALAI_ENABLED were bare `${VAR:-true}` at their single point of use.
-#
-# So: declared together, validated together, used bare below.
+# Every optional guard and secret gets its default HERE, not at the point of use:
+# `set -u` means an unexported "$RECORDING_SECRET" kills the script, so turning
+# recording OFF used to break provisioning entirely.
 TALK_ENABLED="${TALK_ENABLED:-true}"
 RECORDING_ENABLED="${RECORDING_ENABLED:-true}"
 LOCALAI_ENABLED="${LOCALAI_ENABLED:-true}"
@@ -61,17 +48,9 @@ check_bool TALK_ENABLED "$TALK_ENABLED"
 check_bool RECORDING_ENABLED "$RECORDING_ENABLED"
 check_bool LOCALAI_ENABLED "$LOCALAI_ENABLED"
 
-# THE IMAGE SPLITS trusted_proxies ON SPACES: reverse-proxy.config.php does
-# array_filter(array_map('trim', explode(' ', getenv('TRUSTED_PROXIES')))). A
-# comma-separated value is therefore ONE entry matching no proxy, proxy trust is
-# off, and REMOTE_ADDR is the reverse proxy for every request -- so rate limiting,
-# brute-force protection and every logged client IP are wrong, silently.
-#
-# This checks the RAW STRING, not the resolved config. An earlier version read
-# `occ config:system:get trusted_proxies` and crash-looped staging, because that
-# resolves per container and this one does not serve HTTP. The string is
-# identical in every container that declares the variable, so checking it here is
-# sound in a way that checking the effective value never was.
+# Commas silently disable proxy trust, so refuse the string outright. Checks the
+# RAW VARIABLE, never the resolved config -- that resolves per container and
+# reading it here crash-looped staging. README: TRUSTED_PROXIES.
 case "${TRUSTED_PROXIES:-}" in
   *,*) die "TRUSTED_PROXIES is comma-separated; the image splits on SPACES, so this silently disables proxy trust. Use: TRUSTED_PROXIES='10.0.0.0/8 172.16.0.0/12'" ;;
 esac
@@ -145,37 +124,17 @@ occ config:system:set mail_smtppassword --value="$SMTP_PASSWORD" >/dev/null
 occ config:system:set mail_from_address --value="$MAIL_FROM" >/dev/null
 occ config:system:set mail_domain --value="$MAIL_DOMAIN" >/dev/null
 
-# Audit logging that actually records something.
-#
-# `admin_audit` was enabled on production from 2026-08-20 and its log file was ZERO BYTES
-# on 2026-09-01, having never been written to. Enabling the app is not enough, and the
-# combination that makes it silent is not obvious:
-#
-#   Actions/Action.php calls $logger->info(). Log.php falls back to
-#   getValue('loglevel', ILogger::WARN), and INFO (1) is below WARN (2), so every audit
-#   entry is discarded before it reaches the file.
-#
-# So the app reports enabled, the file exists, and nothing is ever recorded. That is worse
-# than having no audit log, because it reads as coverage. It cost us the answer to "who
-# created these accounts" on 2026-09-01, which had to be reconstructed from git history.
-#
-# `log.condition.matches` lowers the threshold for ONE app rather than globally: Action.php
-# passes ['app' => 'admin_audit'] as context and Log.php matches on exactly that key, so
-# the rest of the instance stays at WARN and nextcloud.log does not fill with INFO noise.
-#
-# Rotation needs no setting: admin_audit's own Rotate job defaults log_rotate_size to 100MB.
+# Enabling admin_audit is NOT enough: it logs at INFO, the instance floors at WARN,
+# and the file stays zero bytes while reading as coverage. log.condition.matches
+# lowers the threshold for this app alone. README: "Audit logging that records".
 occ config:system:set log_type_audit --value=file >/dev/null
 occ config:system:set logfile_audit --value=/var/www/html/data/audit.log >/dev/null
 occ config:system:set log.condition matches 0 apps 0 --value=admin_audit >/dev/null
 occ config:system:set log.condition matches 0 loglevel --value=1 --type=integer >/dev/null
 
-# Heavy daily jobs (previews, file scans, cleanups) otherwise run whenever cron
-# happens to fire, including the middle of a workday. Nextcloud takes a START
-# HOUR IN UTC and works forward four hours from it.
-#
-# 8 UTC is 4am Eastern, and it is chosen to sit AFTER the 3am-Eastern (07:00 UTC)
-# off-site backup rather than on top of it -- both are I/O-heavy and prod is a
-# single node whose object store shares a block volume with the database.
+# Start hour is UTC and Nextcloud works forward four hours. 8 UTC = 4am Eastern,
+# deliberately AFTER the 07:00 UTC off-site backup, not on top of it: both are
+# I/O-heavy and prod is one node sharing a volume between object store and DB.
 occ config:system:set maintenance_window_start --value="${MAINTENANCE_WINDOW_START:-8}" --type=integer >/dev/null
 
 # Indices ship with app updates but are never added automatically, because on a
@@ -185,90 +144,32 @@ occ config:system:set maintenance_window_start --value="${MAINTENANCE_WINDOW_STA
 # accept downtime in rather than being a surprise later.
 occ db:add-missing-indices >/dev/null
 
-# TRUSTED_PROXIES IS SPACE-SEPARATED, AND COMMAS FAIL SILENTLY. The official
-# image builds the array itself:
-#
-#   $CONFIG['trusted_proxies'] = array_filter(array_map('trim', explode(' ', $tp)));
-#
-# so "10.0.0.0/8,172.16.0.0/12" is ONE element matching no proxy. Proxy trust is
-# then simply off: REMOTE_ADDR is Traefik for every request, and rate limiting,
-# brute-force protection and every logged client IP are wrong. Measured on
-# production 2026-09-08 as three CIDRs in a single 39-character entry.
-#
-# THERE IS DELIBERATELY NO CHECK HERE, and the reason is worth writing down.
-# reverse-proxy.config.php is a STATIC file in the image that calls
-# getenv('TRUSTED_PROXIES') at runtime, so the effective value depends on which
-# container is asking. The app service has the variable; this one does not. A
-# check here therefore reads a different, staler value than the web server uses
-# -- it crash-looped staging on 2026-09-08 while the app's own value was already
-# correct. The assertion has to run against the app container, not here.
+# NO CHECK HERE ON PURPOSE: the effective value is per-container and this one does
+# not declare the variable, so asserting it here reads a staler value than the web
+# server uses. The check belongs in the app container. README: TRUSTED_PROXIES.
 
-# Nextcloud seeds every NEW account with a sample contact on first login, so Contacts is
-# not an empty screen that reads as broken. The stock card is "Leon Green, Manager at
-# Company" -- a plausible-looking fake PERSON, which in a co-op member's address book reads
-# like somebody they are supposed to know. The give-aways (123 Street Street,
-# leon@example.com, +999999999999) only show once the card is opened.
-#
-# So the sample stays ON, but the card is ours: an obviously-not-a-person contact for the
-# co-op itself, which teaches the same thing and is actually useful to have.
+# The stock sample contact is a plausible-looking fake PERSON, which in a member's
+# address book reads like someone they should know. Sample stays ON, card is ours.
+# README: "The default contact card".
 occ config:app:set dav createExampleContact --value=yes >/dev/null
 
 # The sample EVENT stays off: there is no replacement designed for it, and the stock one has
 # the same fake-data problem with nothing better to put in its place.
 occ config:app:set dav createExampleEvent --value=no >/dev/null
 
-# --lazy IS LOAD-BEARING ON EVERY LINE THAT HAS IT. A key written non-lazily but
-# READ with `lazy: true` is not found, and the reader silently gets its default.
-# Nothing errors. `occ config:app:get` prints the value you set, the database
-# holds it, and the app never sees it -- so the setting reads as applied from
-# every angle except the only one that matters.
-#
-# `occ config:app:set` writes non-lazy unless told otherwise; integration_openai's
-# admin panel writes lazy. So a value set here and a value set in the UI are not
-# the same row, and only the UI's version is ever read.
-#
-# Measured on production 2026-09-08, after an ops meeting was lost:
-#
-#   key                    stored   read     effect
-#   url                    non-lazy non-lazy OK, which is why requests DID reach stt-proxy
-#   stt_url                non-lazy LAZY     ignored -> sttOverrideEnabled() false
-#   request_timeout        non-lazy LAZY     ignored -> 240 s (OPENAI_DEFAULT_REQUEST_TIMEOUT)
-#   default_stt_model_id   non-lazy LAZY     ignored -> upstream's default model
-#
-# Because stt_url was invisible, the STT branch was never taken, so the correctly
-# stored stt_request_timeout was never consulted either. Every transcription died
-# at exactly 240 s with "0 bytes received" while stt-proxy was still working.
-# An earlier comment here blamed the wrong setting; the setting was fine and the
-# write was wrong.
-#
-# The rule: match --lazy to how the app reads the key. Check before adding one:
+# --lazy must MATCH how the app reads the key, or the value is silently invisible.
+# Check before adding one:
 #   grep -r "APP_ID, 'the_key'" custom_apps/<app>/lib/ | grep 'lazy: true'
+# README: "The --lazy flag is load-bearing" has the production evidence.
 #
-# whisper-base on CPU took 7 minutes for a 1-hour recording. Two hours is the
-# planning ceiling, so 4 hours of headroom is deliberate rather than arbitrary.
+# 4h: whisper-base on CPU took 7 min for a 1-hour recording; 2h is the ceiling.
 occ_set_lazy integration_openai stt_request_timeout "${STT_REQUEST_TIMEOUT:-14400}"
 occ_set_lazy integration_openai request_timeout "${STT_REQUEST_TIMEOUT:-14400}"
 
-# The card itself lives in appdata (dav/defaultContact/defaultContact.vcf) with
-# `hasCustomDefaultContact` in appconfig, so it survives ordinary redeploys. It is NOT
-# re-applied here: doing so needs an authenticated HTTP PUT, and on a cold rebuild the
-# public URL may not have a certificate yet, which would make this step fail for a reason
-# unrelated to what it is doing. A rebuild from empty volumes therefore falls back to Leon
-# Green, which is wrong but not broken. Re-apply with:
-#
-#   curl -u "$ADMIN_USER:$ADMIN_PASSWORD" -X PUT \
-#     "https://$DOMAIN/apps/dav/api/defaultcontact/contact" \
-#     -H 'Content-Type: application/json' \
-#     --data "{\"contactData\": \"$(sed -z 's/\n/\\n/g' files/defaultContact.vcf)\"}"
-#
-# That file is stacks/nextcloud/files/defaultContact.vcf in this repo. It is the
-# card's content and nothing applies it automatically, for the reason above --
-# so it is an input to the command here, not dead weight.
-#
-# Verify by creating an account, logging in once (the address book is created on FIRST
-# LOGIN, not at creation -- checking straight after `user:add` shows no addressbooks and
-# proves nothing), then exporting:
-#   /remote.php/dav/addressbooks/users/<uid>/contacts/?export
+# The card survives redeploys in appdata and is NOT re-applied here (it needs an
+# authenticated HTTPS PUT, which a cold rebuild may not have a certificate for yet).
+# files/defaultContact.vcf is its content, applied by hand.
+# README: "The default contact card" has the command and how to verify it.
 
 apps="richdocuments whiteboard deck calendar contacts mail quota_warning admin_audit suspicious_login admincockpit firstrunwizard twofactor_totp twofactor_backupcodes $EXTRA_APPS"
 if [ "$TALK_ENABLED" = true ]; then apps="spreed $apps"; fi
@@ -312,15 +213,9 @@ if [ "$TALK_ENABLED" = true ]; then
     "{\"servers\":[{\"server\":\"https://$TALK_HOST\",\"verify\":true}],\"secret\":\"$SIGNALING_SECRET\"}" >/dev/null
   log "talk: relay $TURN_HOST:$TURN_PORT, signaling https://$TALK_HOST"
 
-  # Call recording, and the transcript that is the point of it.
-  #
-  # Talk turns a finished recording into a transcript BY ITSELF once any
-  # transcription provider is registered -- see RecordingService, which reads
-  # call_recording_transcription === 'yes'. So there is no transcription logic
-  # here: make the two backends reachable, register the provider, set the flag.
-  #
-  # isRecordingEnabled() also wants signaling mode != internal, which the block
-  # above has just satisfied.
+  # Talk transcribes a finished recording BY ITSELF once any provider is
+  # registered, so there is no transcription logic here: make the backends
+  # reachable, register the provider, set the flag.
   if [ "$RECORDING_ENABLED" = true ] && [ -n "$RECORDING_SECRET" ]; then
     occ config:app:set spreed recording_servers --value \
       "{\"servers\":[{\"server\":\"${RECORDING_URL:-http://talk-recording:1234}\",\"verify\":false}],\"secret\":\"$RECORDING_SECRET\"}" >/dev/null
@@ -328,18 +223,9 @@ if [ "$TALK_ENABLED" = true ]; then
     occ config:app:set spreed call_recording_transcription --value yes >/dev/null
     log "talk: recording ${RECORDING_URL:-http://talk-recording:1234}, auto-transcribe on"
 
-    # The speech-to-text provider, registered through a manual-install daemon.
-    # NOT docker-install: that hands a container the Docker socket on a host that
-    # is not ours, and AppAPI's own help calls it deprecated and scheduled for
-    # removal in Nextcloud 35.
-    #
-    # Any docker-install daemon here is debris -- one was registered by hand on
-    # production 2026-08-29 pointing at a container that never existed, which
-    # logged an error on every admin visit to /settings/apps and would have made
-    # this registration fail for an unrelated reason.
-    # OUTSIDE the STT_SECRET guard on purpose. Nested inside it, this never ran
-    # once stt_whisper2 defaulted to 0 replicas, so the stale daemon survived a
-    # deploy that was supposed to remove it (measured on production 2026-08-30).
+    # manual-install, never docker-install (README: "Why LocalAI and not
+    # stt_whisper2"). Cleanup sits OUTSIDE the STT_SECRET guard on purpose --
+    # nested inside, it stopped running at 0 replicas and stale daemons survived.
     for d in $(occ app_api:daemon:list 2>/dev/null | awk -F'|' '$5 ~ /docker-install/ {gsub(/ /,"",$3); print $3}'); do
       occ app_api:daemon:unregister "$d" >/dev/null 2>&1 \
         && log "removed stale docker-install daemon '$d'" || true
@@ -369,20 +255,9 @@ if [ "$TALK_ENABLED" = true ]; then
       log "stt_whisper2: no STT_SECRET, skipping provider registration"
     fi
 
-    # LocalAI (whisper.cpp) as the transcription provider, reached through
-    # integration_openai. Measured on staging 2026-08-29 against one 8.33s
-    # sample, same node, same 2-core cap:
-    #
-    #   stt_whisper2 large-v3        460.8s  55x real time  OOM-killed at 5G
-    #   stt_whisper2 large-v3-turbo  233.9s  28x
-    #   LocalAI small-en-q5_1        261.3s  31x
-    #   LocalAI base-en-q5_1          64.3s  7.7x
-    #
-    # At MATCHED accuracy the two engines are within ~10% of each other, so this
-    # is not a speed win. It is a footprint win: 0.3 GB image and ~0.2 GB idle,
-    # against 16.3 GB of CUDA libraries and a 3.87 GB peak on a host with no GPU.
-    # Both stay registered; the preference below is one config value, so swapping
-    # engines is a config change rather than a redeploy.
+    # LocalAI (whisper.cpp) via integration_openai. Both engines stay registered
+    # and the preference below is one config value, so swapping is a config change
+    # rather than a redeploy. README: "Why LocalAI and not stt_whisper2".
     if [ "$LOCALAI_ENABLED" = true ]; then
       # `|| true` is load-bearing under `set -eu`: app:install is NOT idempotent
       # and errors when the app is already present, which aborted the whole
@@ -422,12 +297,9 @@ if [ "$TALK_ENABLED" = true ]; then
       fi
     fi
   elif [ "$RECORDING_ENABLED" = true ]; then
-    # Booting clean when the secrets do not exist yet is deliberate, so this must
-    # NOT be fatal -- see the matching comment in the compose file. But it was
-    # also completely silent: the flag asked for recording, the deploy reported
-    # success, and nothing recorded, transcribed or registered a provider. An
-    # operator cannot tell that apart from a feature that ran and did nothing,
-    # which is the failure mode this whole file exists to remove.
+    # NOT fatal -- booting clean without the secrets is deliberate. But it must
+    # SAY SO: silently skipping is indistinguishable from running and doing
+    # nothing, which is the failure mode this file exists to remove.
     log "WARN recording enabled but RECORDING_SECRET is empty -- recording, transcription and the STT provider are all UNCONFIGURED"
   fi
 
@@ -445,14 +317,9 @@ else
   log "created admin '$ADMIN_USER'"
 fi
 
-# SET OUTSIDE THE CREATE BRANCH ON PURPOSE. The account already exists on every
-# deployed instance, and the branch above deliberately leaves existing accounts
-# alone -- so setting the address only at creation would never reach the one
-# account that actually needs it. occ user:setting is idempotent.
-#
-# Without an address the shared service admin cannot be sent a password reset and
-# receives none of the alerts Nextcloud mails to administrators. It is the account
-# with the most privilege and the least recoverability on the instance.
+# OUTSIDE the create branch on purpose: the account already exists everywhere, so
+# setting the address only at creation would never reach it. Without an address
+# this admin cannot be password-reset and gets no admin alerts. Idempotent.
 if [ -n "$ADMIN_EMAIL" ]; then
   occ user:setting "$ADMIN_USER" settings email "$ADMIN_EMAIL" >/dev/null
   log "admin '$ADMIN_USER' email set"

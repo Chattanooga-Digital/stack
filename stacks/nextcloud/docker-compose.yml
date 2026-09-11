@@ -200,23 +200,9 @@ services:
         limits:
           memory: ${MEM_LIMIT_CRON:-512M}
 
-  # NOTHING PROCESSES AI TASKS WITHOUT THIS.
-  #
-  # `integration_openai` is a SYNCHRONOUS TaskProcessing provider, and Nextcloud
-  # runs those only from a dedicated worker. Cron does not run them. Without a
-  # worker a Talk transcription is accepted, written to the queue as RUNNING, and
-  # sits at progress 0 for ever -- no error, no log line, nothing on the status
-  # page. It looks exactly like a slow job.
-  #
-  # Found 2026-09-01 on the first real meeting recording. The recording was
-  # intact, LocalAI had the model, the provider was configured, and the job had
-  # been "running" for 25 minutes having never contacted anything. There was
-  # simply nobody to run it. Starting a worker by hand moved it in seconds.
-  #
-  # Waits for the install rather than racing it, because Swarm ignores
-  # depends_on ordering.
-  #
-  # Why --timeout matters, and what it cost: scripts/taskworker.sh.
+  # Cron does NOT run TaskProcessing jobs. Without this worker a transcription
+  # queues as RUNNING at progress 0 for ever, with no error anywhere.
+  # README: "Nothing processes AI tasks without the worker".
   taskworker:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
     entrypoint: ["/bin/sh", "/config/taskworker.sh"]
@@ -244,30 +230,9 @@ services:
         limits:
           memory: ${MEM_LIMIT_TASKWORKER:-1G}
 
-  # A RECORDING NOBODY CAN REACH IS NOT A RECORDING.
-  #
-  # Talk stores a recording under the recorder's own <attachment folder>/Recording/
-  # <room token>/ and then notifies THEM to decide whether to publish it. The file
-  # is private until somebody clicks "Share to chat". That is deliberate upstream
-  # and sensible for a one-to-one call; for a co-op ops meeting it means the record
-  # of the meeting belongs to whoever happened to press the button.
-  #
-  # The 2026-09-01 ops meeting is why this exists: recording and transcript both
-  # completed, and both were unreachable to everyone but the recorder, who had no
-  # reason to know a second step existed. It read as a broken transcript pipeline.
-  # It was not -- it was working exactly as designed, and the design assumed a
-  # human would finish the job.
-  #
-  # This finishes it. Files under .../Recording/<token>/ are shared, read-only, to
-  # that one conversation and nothing else -- never a user share, never a public
-  # link, never another room. It calls Talk's own RecordingService::shareToChat(),
-  # so the chat message is attributed to the file's owner and tagged as a recording
-  # rather than a generic file, and the owner's pending notification is cleared.
-  #
-  # Set RECORDING_AUTOSHARE=0 to stop it without redeploying the stack.
-  #
-  # Waits for the install rather than racing it, because Swarm ignores depends_on
-  # ordering.
+  # Shares finished recordings to the conversation they came from; without it they
+  # stay private to whoever pressed record. RECORDING_AUTOSHARE=0 turns it off.
+  # README: "Recordings are shared to their conversation".
   recording-share:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
     entrypoint: ["/bin/sh", "/config/recording-share.sh"]
@@ -324,16 +289,11 @@ services:
       TURN_PORT: ${TURN_PORT:-3478}
       TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
       SIGNALING_SECRET: ${SIGNALING_SECRET:?SIGNALING_SECRET not set}
-      # Declared here so init can VALIDATE it, not because init serves HTTP.
-      # The image splits this on spaces, so a comma-separated value silently
-      # turns proxy trust off; init now refuses that string outright. Checking
-      # the raw variable is sound in any container that declares it -- checking
-      # the RESOLVED trusted_proxies is not, and crash-looped staging once.
+      # Here so init can VALIDATE it, not because init serves HTTP. Commas
+      # silently disable proxy trust, so init refuses them. README: TRUSTED_PROXIES.
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:?TRUSTED_PROXIES not set}
-      # Call recording + the speech-to-text provider that turns it into a
-      # transcript. Unset RECORDING_SECRET still skips the whole block, so an
-      # environment that has not created the secrets yet boots clean -- but it
-      # now says so in the log instead of skipping in silence.
+      # Call recording + its transcription provider. Unset RECORDING_SECRET
+      # skips the block and SAYS SO, rather than skipping in silence.
       RECORDING_ENABLED: ${RECORDING_ENABLED:-true}
       RECORDING_SECRET: ${RECORDING_SECRET:-}
       RECORDING_URL: ${RECORDING_URL:-http://talk-recording:1234}
@@ -467,13 +427,9 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-talk.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
         - "traefik.http.services.${INSTANCE_NAME}-talk.loadbalancer.server.port=8081"
 
-  # Records calls so Talk can transcribe them (#TBD). Nextcloud calls this over
-  # nextcloud_internal, so it needs NO Traefik router and no public exposure.
-  #
-  # It joins the call as a participant by driving a headless Firefox, which makes
-  # it the heaviest thing in this stack while a recording runs -- on a node that
-  # also serves Drupal production and a second tenant's Nextcloud. The ceilings
-  # below are the point, not decoration.
+  # Records calls for transcription. Internal only, no Traefik router. Drives a
+  # headless Firefox, so it is the heaviest thing here while recording -- on a
+  # shared node. The ceilings below are load-bearing, not decoration.
   talk-recording:
     image: ${TALK_RECORDING_IMAGE:-nextcloud/aio-talk-recording}:${TALK_RECORDING_VERSION:?TALK_RECORDING_VERSION not set}
     environment:
@@ -481,17 +437,9 @@ services:
       # The HPB is on its OWN host, not ${DOMAIN}. Left unset this silently
       # defaults to NC_DOMAIN and every recording fails to reach signaling.
       HPB_DOMAIN: ${TALK_HOST:?TALK_HOST not set}
-      # EMPTY, not the image's /standalone-signaling/ default. The recorder
-      # looks its signaling secret up by EXACT string match on the URL Nextcloud
-      # reports (Config.getSignalingSecret: `signalingUrl.rstrip('/')` then
-      # `in self._signalings`). Our spreed signaling_servers is the bare host
-      # https://turn.chattanooga.digital, because the HPB has its own hostname;
-      # AIO instead puts signaling on a path of the main domain, which is where
-      # that default comes from. Left at the default the stored key is
-      # ".../standalone-signaling", the lookup misses, there is no [signaling]
-      # internalsecret to fall back to, and every recording dies with "No
-      # configured signaling secret" AFTER the call has already started
-      # (measured on production 2026-08-30).
+      # MUST be empty here, not the image's /standalone-signaling/ default: our
+      # HPB has its own hostname. Wrong value = every recording dies mid-call.
+      # README: "HPB_PATH must be empty".
       HPB_PATH: ${TALK_RECORDING_HPB_PATH:-}
       # Must equal the talk container's INTERNAL_SECRET. This is NOT
       # SIGNALING_SECRET and the two are not interchangeable.
@@ -510,22 +458,11 @@ services:
           cpus: "${CPU_LIMIT_TALK_RECORDING:-2.0}"
           memory: ${MEM_LIMIT_TALK_RECORDING:-2G}
 
-  # Speech-to-text provider. Talk transcribes a finished recording automatically
-  # once ANY transcription provider is registered -- this is that provider.
-  #
-  # Registered with AppAPI as "manual-install", deliberately: the alternative
-  # ("docker-install") mounts the Docker socket into a container on a host that
-  # is not ours, and AppAPI's own help calls the socket-proxy form deprecated and
-  # scheduled for removal in Nextcloud 35.
-  #
-  # Upstream recommends 10-20 cores and warns it "will hog all cores by default".
-  # Transcription here is a weekly batch job, so a hard cap costs minutes we do
-  # not care about and protects a live client site we do.
-  #
-  # REPLICAS DEFAULTS TO 0. This was the experiment, not the answer. It is a
-  # 16.3 GB image of CUDA libraries for a host with no GPU, it OOM-killed at a
-  # 5G ceiling (exit 137), and at matched accuracy it is no faster than LocalAI,
-  # which is 0.3 GB. Set STT_WHISPER2_REPLICAS=1 to bring it back for comparison.
+  # REPLICAS DEFAULTS TO 0 -- this lost its bake-off against LocalAI and stays
+  # only as a comparison switch. STT_WHISPER2_REPLICAS=1 brings it back.
+  # Registered manual-install, never docker-install: that mounts the Docker
+  # socket on a host that is not ours.
+  # README: "Why LocalAI and not stt_whisper2".
   stt-whisper2:
     image: ${STT_WHISPER2_IMAGE:-ghcr.io/nextcloud/stt_whisper2}:${STT_WHISPER2_VERSION:-2.5.0}
     environment:
@@ -553,20 +490,9 @@ services:
           cpus: "${CPU_LIMIT_STT:-2.0}"
           memory: ${MEM_LIMIT_STT:-5G}
 
-  # whisper.cpp behind an OpenAI-compatible API, as the transcription provider.
-  #
-  # This exists because stt_whisper2 was measured, on staging, at 28x slower than
-  # real time even on its speed-optimised model -- about 28 hours of pegged CPU
-  # for a one-hour meeting -- and it OOM-killed (exit 137) at a 5G ceiling. Its
-  # image is 16.3 GB of CUDA libraries for a host with no GPU.
-  #
-  # This image is 0.3 GB and the default whisper-1 model is whisper.cpp's
-  # quantised ggml-base.bin, ~140 MB. Nextcloud reaches it through the
-  # integration_openai app, which defaults its transcription model to exactly
-  # that name.
-  #
-  # No Traefik router: Nextcloud calls it over nextcloud_internal, and nothing
-  # outside the stack has any business reaching an inference endpoint.
+  # whisper.cpp behind an OpenAI-compatible API: the actual transcription
+  # provider. Internal only -- nothing outside the stack should reach an
+  # inference endpoint. README: "Why LocalAI and not stt_whisper2".
   localai:
     image: ${LOCALAI_IMAGE:-localai/localai}:${LOCALAI_VERSION:?LOCALAI_VERSION not set}
     environment:
@@ -574,24 +500,15 @@ services:
       # oversubscribes and gets slower rather than faster.
       LOCALAI_THREADS: ${LOCALAI_THREADS:-2}
       LOCALAI_CONTEXT_SIZE: ${LOCALAI_CONTEXT_SIZE:-512}
-      # LocalAI's default upload limit is 15 MB. Sixteen-kHz mono audio runs about
-      # 115 MB per hour, so even a correctly transcoded two-hour meeting clears
-      # the default many times over. A 278 MB recording on 2026-09-01 was refused
-      # mid-upload and surfaced only as a broken pipe. This bounds abuse, not use.
+      # LocalAI defaults to a 15 MB upload cap; 16 kHz mono is ~115 MB/hour, so
+      # a real meeting blows past it and fails as a bare broken pipe.
       LOCALAI_UPLOAD_LIMIT: ${LOCALAI_UPLOAD_LIMIT:-512}
       LOCALAI_MODELS_PATH: /models
       LOCALAI_LOG_LEVEL: ${LOCALAI_LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
-    # LocalAI v4 ships NO backends in the image: /models holds the model
-    # definition, /backends holds the runtime that executes it, and the image has
-    # an empty /backends. Worse, /backends was not persisted, so anything
-    # installed there vanished on the next container restart. The symptom is
-    # brutal to diagnose: /v1/models happily advertises whisper-base-en-q5_1, so
-    # every readiness check passes, and the request then fails with
-    # "backend not found: whisper". Found 2026-09-01 after a real meeting
-    # recording could not be transcribed.
-    #
-    # Installed on start if absent, into a volume so it is downloaded once.
+    # LocalAI v4 ships an EMPTY /backends, and /v1/models still advertises the
+    # model -- so readiness passes and the request fails "backend not found".
+    # Installed on start if absent, into a volume. README: "LocalAI backends".
     entrypoint:
       - /bin/sh
       - -c
@@ -610,24 +527,14 @@ services:
       resources:
         limits:
           cpus: "${CPU_LIMIT_LOCALAI:-2.0}"
-          # whisper loads the audio as float32: an hour of 16 kHz mono is about
-          # 230 MB of samples before buffers. Measured peak 2,270 MB for a
-          # one-hour recording on 2026-09-01, where a 2 GB limit was OOM-killed
-          # with nothing but "error reading from server: EOF" to show for it.
-          # 4 GB covers the two-hour planning ceiling.
+          # whisper decodes to float32: measured peak 2,270 MB for one hour.
+          # 4 GB covers the two-hour ceiling; 2 GB was OOM-killed.
           memory: ${MEM_LIMIT_LOCALAI:-4G}
 
-  # Adds a vocabulary prompt to Nextcloud's speech-to-text requests.
-  #
-  # Whisper takes a prompt that biases decoding toward expected words, and it is
-  # the difference between "Chata Nougah" and "Chattanooga" -- measured A/B on
-  # identical audio 2026-08-29. It cannot be configured where it belongs:
-  # LocalAI reads the prompt from the REQUEST only (`prompt := c.FormValue`,
-  # no model-config fallback, unlike language and translate), and
-  # integration_openai has no setting to send one. So this sits between them.
-  #
-  # It splices one extra multipart part onto the front of the body rather than
-  # parsing and rebuilding it, so it cannot corrupt the audio payload.
+  # Splices a vocabulary prompt into speech-to-text requests -- the difference
+  # between "Chata Nougah" and "Chattanooga". Neither LocalAI nor
+  # integration_openai can carry it, so it sits between them.
+  # README: "The vocabulary prompt, and why it needs a proxy".
   stt-proxy:
     image: ${STT_PROXY_IMAGE:-python}:${STT_PROXY_PYTHON_VERSION:-3.13-alpine}
     entrypoint: ["/bin/sh", "/config/stt-proxy-entrypoint.sh"]
