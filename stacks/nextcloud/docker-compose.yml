@@ -43,7 +43,7 @@ networks:
 # the deploy reports success. Applies to every entry below.
 configs:
   init_sh:
-    name: ${INIT_CONFIG_NAME:-nextcloud_init_6}
+    name: ${INIT_CONFIG_NAME:-nextcloud_init_7}
     file: ./scripts/init.sh
   stt_proxy_py:
     name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_2}
@@ -58,7 +58,7 @@ configs:
     name: ${RECORDING_SHARE_SH_CONFIG_NAME:-nextcloud_recording_share_sh_1}
     file: ./scripts/recording-share.sh
   stt_proxy_entrypoint_sh:
-    name: ${STT_PROXY_ENTRYPOINT_CONFIG_NAME:-nextcloud_stt_proxy_entrypoint_1}
+    name: ${STT_PROXY_ENTRYPOINT_CONFIG_NAME:-nextcloud_stt_proxy_entrypoint_2}
     file: ./scripts/stt-proxy-entrypoint.sh
   localai_entrypoint_sh:
     name: ${LOCALAI_ENTRYPOINT_CONFIG_NAME:-nextcloud_localai_entrypoint_1}
