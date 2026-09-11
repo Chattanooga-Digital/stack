@@ -40,6 +40,36 @@ it and no port is published for it.
 Primary storage is the `nextcloud_html` volume. `S3_*` is honoured at first install
 only, so adopting object storage later is a data migration rather than a config change.
 
+## Recording consent, and what a deploy is allowed to overwrite
+
+Talk ships the whole consent feature and this stack used to leave it switched off.
+
+`recording_consent` takes three values (`RecordingService`: `CONSENT_REQUIRED_NO = 0`,
+`YES = 1`, `OPTIONAL = 2`). It defaulted to **0**, and 0 is not the neutral choice it looks
+like: at 0 Talk **hides the per-conversation control from moderators entirely**. So a comment
+saying "we leave the decision to the co-op" was describing the one setting that takes the
+decision away from them. `init.sh` now seeds **2** — moderators decide per conversation, which
+is what "enable or disable recording on a specific call" actually requires. Change it with
+`RECORDING_CONSENT`, or in the admin panel, where it belongs.
+
+**Seed it, do not set it.** `occ_seed` writes a key only when it is absent. The distinction the
+whole script turns on:
+
+| | re-asserted every deploy | seeded once |
+|---|---|---|
+| **wiring** — where a container lives, which secret it uses | `recording_servers`, `integration_openai` urls and timeouts | |
+| **policy** — whether to record, transcribe, or require consent | | `call_recording`, `call_recording_transcription`, `recording_consent`, the audio2text preference |
+
+Containers move, so wiring has to be reconciled. Policy belongs to whoever is looking at the
+admin panel, and a deploy that overwrites their choice takes it away from them silently. That
+was a real defect here: `call_recording_transcription` was force-written to `yes` on every
+deploy over a checkbox whose upstream default is `no`.
+
+**`recording_consent` must not be written lazily.** `Config::getRecordingConsentConfig()` reads
+it through the non-lazy `IConfig::getAppValue` (`custom_apps/spreed/lib/Config.php:231`), so a
+`--lazy` row would be written, shown correctly by `occ config:app:get`, and never seen by Talk.
+See *The --lazy flag is load-bearing*.
+
 ## Recordings are shared to their conversation
 
 Talk stores a recording under the recorder's own `<attachment folder>/Recording/<room

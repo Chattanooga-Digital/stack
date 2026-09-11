@@ -24,11 +24,27 @@ occ_set_lazy() { # app key value
     || die "$1/$2 is still stored non-lazy; the app reads it lazily and will ignore it"
 }
 
+# Seed a POLICY value once and never again. The distinction this whole file turns
+# on: WIRING (where a container lives, which secret it uses) must be re-asserted
+# every deploy, because the containers move. POLICY (whether to record, whether to
+# transcribe, whether consent is required) belongs to the admin panel, and a deploy
+# that overwrites it takes the decision away from the person whose decision it is.
+# Setting policy unconditionally is what makes an admin's UI change revert on the
+# next deploy, which is unexpected behaviour and was raised in review.
+occ_seed() {  # app key value
+  if occ config:app:get "$1" "$2" >/dev/null 2>&1; then
+    log "$1 $2 already set, leaving it alone"
+  else
+    occ config:app:set "$1" "$2" --value "$3" >/dev/null && log "seeded $1 $2=$3"
+  fi
+}
+
 # Every optional guard and secret gets its default HERE, not at the point of use:
 # `set -u` means an unexported "$RECORDING_SECRET" kills the script, so turning
 # recording OFF used to break provisioning entirely.
 TALK_ENABLED="${TALK_ENABLED:-true}"
 RECORDING_ENABLED="${RECORDING_ENABLED:-true}"
+RECORDING_CONSENT="${RECORDING_CONSENT:-2}"
 LOCALAI_ENABLED="${LOCALAI_ENABLED:-true}"
 RECORDING_SECRET="${RECORDING_SECRET:-}"
 SMTP_HOST="${SMTP_HOST:-smtp.resend.com}"
@@ -216,11 +232,26 @@ if [ "$TALK_ENABLED" = true ]; then
   # registered, so there is no transcription logic here: make the backends
   # reachable, register the provider, set the flag.
   if [ "$RECORDING_ENABLED" = true ] && [ -n "$RECORDING_SECRET" ]; then
+    # WIRING -- re-asserted every deploy, because the container it points at moves.
     occ config:app:set spreed recording_servers --value \
       "{\"servers\":[{\"server\":\"${RECORDING_URL:-http://talk-recording:1234}\",\"verify\":false}],\"secret\":\"$RECORDING_SECRET\"}" >/dev/null
-    occ config:app:set spreed call_recording --value yes >/dev/null
-    occ config:app:set spreed call_recording_transcription --value yes >/dev/null
-    log "talk: recording ${RECORDING_URL:-http://talk-recording:1234}, auto-transcribe on"
+
+    # POLICY -- seeded once, then the admin panel owns it.
+    occ_seed spreed call_recording yes
+    occ_seed spreed call_recording_transcription yes
+
+    # CONSENT. Talk ships the whole feature and we were leaving it at its default
+    # of 0, which is not the neutral choice it looks like: at 0 Talk HIDES the
+    # per-conversation control from moderators, so "we'll let the co-op decide"
+    # actually removed their ability to decide. 2 = CONSENT_REQUIRED_OPTIONAL,
+    # which is what puts the per-call switch in a moderator's hands.
+    # (custom_apps/spreed/lib/Service/RecordingService.php: NO=0, YES=1, OPTIONAL=2)
+    #
+    # NOT occ_set_lazy. Config::getRecordingConsentConfig() reads this through the
+    # non-lazy IConfig::getAppValue (lib/Config.php:231), so a lazy row would be
+    # written, shown by occ, and never seen by Talk.
+    occ_seed spreed recording_consent "$RECORDING_CONSENT"
+    log "talk: recording ${RECORDING_URL:-http://talk-recording:1234}"
 
     # A docker-install daemon hands a container the Docker socket on a host that
     # is not ours, and AppAPI's own help calls it deprecated. One was registered
@@ -253,9 +284,8 @@ if [ "$TALK_ENABLED" = true ]; then
       # explicit preference Nextcloud picks whichever registered first, and any
       # future provider would silently take over transcription. That is how the
       # slowest possible pairing got chosen once before.
-      occ config:app:set core ai.taskprocessing_provider_preferences \
-        --value='{"core:audio2text":"integration_openai-audio2text"}' >/dev/null
-      log "audio2text preference pinned to integration_openai-audio2text"
+      occ_seed core ai.taskprocessing_provider_preferences \
+        '{"core:audio2text":"integration_openai-audio2text"}'
 
       # Install the model INTO LocalAI. Without this Nextcloud is pointed at a
       # model that does not exist, which looks configured and fails on first

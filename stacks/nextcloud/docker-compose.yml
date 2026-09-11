@@ -43,7 +43,7 @@ networks:
 # the deploy reports success. Applies to every entry below.
 configs:
   init_sh:
-    name: ${INIT_CONFIG_NAME:-nextcloud_init_7}
+    name: ${INIT_CONFIG_NAME:-nextcloud_init_8}
     file: ./scripts/init.sh
   stt_proxy_py:
     name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_2}
@@ -297,6 +297,7 @@ services:
       # Call recording + its transcription provider. Unset RECORDING_SECRET
       # skips the block and SAYS SO, rather than skipping in silence.
       RECORDING_ENABLED: ${RECORDING_ENABLED:-true}
+      RECORDING_CONSENT: ${RECORDING_CONSENT:-2}
       RECORDING_SECRET: ${RECORDING_SECRET:-}
       RECORDING_URL: ${RECORDING_URL:-http://talk-recording:1234}
       LOCALAI_ENABLED: ${LOCALAI_ENABLED:-true}
