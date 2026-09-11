@@ -49,7 +49,7 @@ configs:
     name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_2}
     file: ./scripts/stt-prompt-proxy.py
   share_recordings_php:
-    name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_2}
+    name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_3}
     file: ./scripts/share-recordings.php
   taskworker_sh:
     name: ${TASKWORKER_CONFIG_NAME:-nextcloud_taskworker_1}

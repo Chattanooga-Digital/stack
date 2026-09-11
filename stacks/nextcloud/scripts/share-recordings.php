@@ -19,6 +19,30 @@
  * rather than a generic file row, and clears the owner's pending notification so
  * they are not asked to do something already done.
  *
+ * WHAT IS STILL UNSUPPORTED HERE, because a reviewer should not have to find it.
+ *
+ * The supported way to do this is the OCS route the "Share to chat" button calls:
+ *   POST /ocs/v2.php/apps/spreed/api/v1/recording/{token}/share-chat
+ * (RecordingController.php:565, which calls the same RecordingService::shareToChat
+ * this script calls directly). It is not used here for one reason: that route is
+ * #[RequireModeratorParticipant], so it has to be called AS the recorder, which
+ * means an app password per member stored as a secret on a cluster that is not
+ * ours. That is a credential decision for the infrastructure owner, not something
+ * to introduce quietly. Until it is made, this remains three unsupported calls:
+ *
+ *   line 32  require_once lib/base.php   - private core bootstrap. No CLI script
+ *                                          can avoid this; only a real app can.
+ *   line 34  \OC_App::loadApp()          - deprecated legacy loader.
+ *   lines 47-52 the _route spoof         - IRequest::setUrlParameters is @internal
+ *                                          and names OC\AppFramework\App as its
+ *                                          only permitted caller. We are not it.
+ *   OCA\Talk\{Manager,ParticipantService,RecordingService} are not public API.
+ *
+ * The service LOOKUPS were private too and no longer are: they now use
+ * \OCP\Server::get() (public @since 25.0.0), which is what spreed itself uses in
+ * all 43 of its own lookups, with zero uses of \OC::$server anywhere in its lib/.
+ * That was free and should have been this way from the start.
+ *
  * Deliberately narrow:
  *   - only files under .../Recording/<token>/, and only where <token> is a live room
  *   - only to that conversation, read-only; never a user share, never a public link
@@ -44,7 +68,7 @@ require_once '/var/www/html/lib/base.php';
 // against a throwaway room on 2026-09-01 (one file produced exactly one message,
 // attributed to its owner); there is no automated test in this repo yet, so re-check
 // it after a Talk upgrade.
-$request = \OC::$server->get(\OCP\IRequest::class);
+$request = \OCP\Server::get(\OCP\IRequest::class);
 if (method_exists($request, 'setUrlParameters')) {
     $request->setUrlParameters(['_route' => 'ocs.spreed.recording.sharetochat']);
 } else {
@@ -65,14 +89,14 @@ $minAgeEnv = getenv('STT_SHARE_MIN_AGE');
 // Not `?: 120` -- "0" is falsy, so that silently ignores an explicit zero.
 $minAge = ($minAgeEnv === false || $minAgeEnv === '') ? 120 : (int)$minAgeEnv;
 
-$sm  = \OC::$server->get(\OCP\Share\IManager::class);
-$um  = \OC::$server->get(\OCP\IUserManager::class);
-$rf  = \OC::$server->get(\OCP\Files\IRootFolder::class);
-$log = \OC::$server->get(\Psr\Log\LoggerInterface::class);
+$sm  = \OCP\Server::get(\OCP\Share\IManager::class);
+$um  = \OCP\Server::get(\OCP\IUserManager::class);
+$rf  = \OCP\Server::get(\OCP\Files\IRootFolder::class);
+$log = \OCP\Server::get(\Psr\Log\LoggerInterface::class);
 
-$roomManager = \OC::$server->get(\OCA\Talk\Manager::class);
-$partService = \OC::$server->get(\OCA\Talk\Service\ParticipantService::class);
-$recService  = \OC::$server->get(\OCA\Talk\Service\RecordingService::class);
+$roomManager = \OCP\Server::get(\OCA\Talk\Manager::class);
+$partService = \OCP\Server::get(\OCA\Talk\Service\ParticipantService::class);
+$recService  = \OCP\Server::get(\OCA\Talk\Service\RecordingService::class);
 
 echo $apply ? "APPLY mode\n" : "DRY RUN (pass --apply to act)\n";
 

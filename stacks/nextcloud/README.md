@@ -87,6 +87,21 @@ owner and rendered as a recording rather than a generic file, and the owner's pe
 
 Set `RECORDING_AUTOSHARE=0` to turn it off and get Talk's stock behaviour back.
 
+**It uses an unsupported path, and here is the supported one.** Talk exposes
+`POST /ocs/v2.php/apps/spreed/api/v1/recording/{token}/share-chat`
+(`RecordingController.php:565`), which calls the very same
+`RecordingService::shareToChat()` this script calls directly — it is what the "Share to
+chat" notification button hits. We do not use it because it is
+`#[RequireModeratorParticipant]`: it must be called **as the recorder**, which needs an app
+password per member held as a secret on a cluster that is not ours. That is a credential
+decision for the infrastructure owner, so the script keeps calling the service directly until
+it is made, and says so at the top of the file rather than leaving a reviewer to find it.
+
+What was fixed for free in the meantime: all eight service lookups moved from the private
+`\OC::$server->get()` to the public `\OCP\Server::get()` (`@since 25.0.0`) — which is what
+spreed itself uses in all 43 of its own lookups, with zero uses of `\OC::$server` anywhere in
+its `lib/`.
+
 ## Why there is no "Live transcription" here
 
 The Talk UI shows an **Enable live transcription** toggle, greyed out, in every conversation's
