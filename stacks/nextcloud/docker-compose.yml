@@ -38,13 +38,36 @@ networks:
     driver: overlay
     attachable: false
 
+# Swarm configs are immutable, so a changed script needs a changed name: bump the
+# matching _CONFIG_NAME in the same commit or the old content keeps running while
+# the deploy reports success. Applies to every entry below.
 configs:
   init_sh:
-    # Bump when init.sh changes; Swarm configs are immutable.
-    name: ${INIT_CONFIG_NAME:-nextcloud_init_1}
+    name: ${INIT_CONFIG_NAME:-nextcloud_init_8}
     file: ./scripts/init.sh
+  stt_proxy_py:
+    name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_2}
+    file: ./scripts/stt-prompt-proxy.py
+  share_recordings_php:
+    name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_3}
+    file: ./scripts/share-recordings.php
+  taskworker_sh:
+    name: ${TASKWORKER_CONFIG_NAME:-nextcloud_taskworker_1}
+    file: ./scripts/taskworker.sh
+  recording_share_sh:
+    name: ${RECORDING_SHARE_SH_CONFIG_NAME:-nextcloud_recording_share_sh_1}
+    file: ./scripts/recording-share.sh
+  stt_proxy_entrypoint_sh:
+    name: ${STT_PROXY_ENTRYPOINT_CONFIG_NAME:-nextcloud_stt_proxy_entrypoint_2}
+    file: ./scripts/stt-proxy-entrypoint.sh
+  localai_entrypoint_sh:
+    name: ${LOCALAI_ENTRYPOINT_CONFIG_NAME:-nextcloud_localai_entrypoint_1}
+    file: ./scripts/localai-entrypoint.sh
 
 volumes:
+  localai_backends:
+  stt_scratch:
+  localai_models:
   nextcloud_html:
     driver: local
   nextcloud_db:
@@ -179,6 +202,70 @@ services:
         limits:
           memory: ${MEM_LIMIT_CRON:-512M}
 
+  # Cron does NOT run TaskProcessing jobs. Without this worker a transcription
+  # queues as RUNNING at progress 0 for ever, with no error anywhere.
+  # README: "Nothing processes AI tasks without the worker".
+  taskworker:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    entrypoint: ["/bin/sh", "/config/taskworker.sh"]
+    user: www-data
+    working_dir: /var/www/html
+    volumes:
+      - nextcloud_html:/var/www/html
+    configs:
+      - source: taskworker_sh
+        target: /config/taskworker.sh
+        mode: 0444
+    environment:
+      TZ: ${TZ:-America/New_York}
+      TASKWORKER_TIMEOUT: ${TASKWORKER_TIMEOUT:-300}
+      # A two-hour recording through whisper-base on CPU runs long. PHP's own
+      # limit has to outlast the HTTP call the worker is making.
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-1G}
+    networks:
+      - nextcloud_internal
+    depends_on:
+      - app
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_TASKWORKER:-1G}
+
+  # Shares finished recordings to the conversation they came from; without it they
+  # stay private to whoever pressed record. RECORDING_AUTOSHARE=0 turns it off.
+  # README: "Recordings are shared to their conversation".
+  recording-share:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    entrypoint: ["/bin/sh", "/config/recording-share.sh"]
+    user: www-data
+    working_dir: /var/www/html
+    volumes:
+      - nextcloud_html:/var/www/html
+    configs:
+      - source: share_recordings_php
+        target: /config/share-recordings.php
+        mode: 0444
+      - source: recording_share_sh
+        target: /config/recording-share.sh
+        mode: 0444
+    environment:
+      TZ: ${TZ:-America/New_York}
+      RECORDING_AUTOSHARE: ${RECORDING_AUTOSHARE:-1}
+      RECORDING_SHARE_INTERVAL: ${RECORDING_SHARE_INTERVAL:-120}
+      # Don't publish a file that is still being written. The recording upload and
+      # the transcript are written at different times; this is the margin.
+      STT_SHARE_MIN_AGE: ${STT_SHARE_MIN_AGE:-120}
+    networks:
+      - nextcloud_internal
+    depends_on:
+      - app
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_RECORDING_SHARE:-256M}
+
   # Installs the apps. Without it a deploy yields a stock Nextcloud: the `talk`
   # service is only the signaling backend, not the Talk app.
   init:
@@ -204,6 +291,18 @@ services:
       TURN_PORT: ${TURN_PORT:-3478}
       TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
       SIGNALING_SECRET: ${SIGNALING_SECRET:?SIGNALING_SECRET not set}
+      # Here so init can VALIDATE it, not because init serves HTTP. Commas
+      # silently disable proxy trust, so init refuses them. README: TRUSTED_PROXIES.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:?TRUSTED_PROXIES not set}
+      # Call recording + its transcription provider. Unset RECORDING_SECRET
+      # skips the block and SAYS SO, rather than skipping in silence.
+      RECORDING_ENABLED: ${RECORDING_ENABLED:-true}
+      RECORDING_CONSENT: ${RECORDING_CONSENT:-2}
+      RECORDING_SECRET: ${RECORDING_SECRET:-}
+      RECORDING_URL: ${RECORDING_URL:-http://talk-recording:1234}
+      LOCALAI_ENABLED: ${LOCALAI_ENABLED:-true}
+      LOCALAI_URL: ${LOCALAI_URL:-http://localai:8080/v1}
+      LOCALAI_STT_MODEL: ${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}
       SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-resend}
@@ -212,6 +311,9 @@ services:
       MAIL_DOMAIN: ${MAIL_DOMAIN:?MAIL_DOMAIN not set}
       ADMIN_USER: ${ADMIN_USER:?ADMIN_USER not set}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      # The shared service admin's address. Without it that account cannot be
+      # password-reset and receives no admin alerts.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_ACCOUNTS: ${ADMIN_ACCOUNTS:-}
       MEMBER_ACCOUNTS: ${MEMBER_ACCOUNTS:-}
       EXTRA_APPS: ${EXTRA_APPS:-}
@@ -323,3 +425,108 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-talk.tls=true"
         - "traefik.http.routers.${INSTANCE_NAME}-talk.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
         - "traefik.http.services.${INSTANCE_NAME}-talk.loadbalancer.server.port=8081"
+
+  # Records calls for transcription. Internal only, no Traefik router. Drives a
+  # headless Firefox, so it is the heaviest thing here while recording -- on a
+  # shared node. The ceilings below are load-bearing, not decoration.
+  talk-recording:
+    image: ${TALK_RECORDING_IMAGE:-nextcloud/aio-talk-recording}:${TALK_RECORDING_VERSION:?TALK_RECORDING_VERSION not set}
+    environment:
+      NC_DOMAIN: ${DOMAIN:?DOMAIN not set}
+      # The HPB is on its OWN host, not ${DOMAIN}. Left unset this silently
+      # defaults to NC_DOMAIN and every recording fails to reach signaling.
+      HPB_DOMAIN: ${TALK_HOST:?TALK_HOST not set}
+      # MUST be empty here, not the image's /standalone-signaling/ default: our
+      # HPB has its own hostname. Wrong value = every recording dies mid-call.
+      # README: "HPB_PATH must be empty".
+      HPB_PATH: ${TALK_RECORDING_HPB_PATH:-}
+      # Must equal the talk container's INTERNAL_SECRET. This is NOT
+      # SIGNALING_SECRET and the two are not interchangeable.
+      INTERNAL_SECRET: ${TALK_INTERNAL_SECRET:?TALK_INTERNAL_SECRET not set}
+      # Must equal the secret in Nextcloud's spreed recording_servers config.
+      RECORDING_SECRET: ${RECORDING_SECRET:?RECORDING_SECRET not set}
+      AIO_LOG_LEVEL: ${TALK_LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_TALK_RECORDING:-2.0}"
+          memory: ${MEM_LIMIT_TALK_RECORDING:-2G}
+
+  # whisper.cpp behind an OpenAI-compatible API: the actual transcription
+  # provider. Internal only -- nothing outside the stack should reach an
+  # inference endpoint. README: "Why LocalAI, and why stt_whisper2 was removed".
+  localai:
+    image: ${LOCALAI_IMAGE:-localai/localai}:${LOCALAI_VERSION:?LOCALAI_VERSION not set}
+    environment:
+      # Threads must stay at or under the CPU limit below, or whisper.cpp
+      # oversubscribes and gets slower rather than faster.
+      LOCALAI_THREADS: ${LOCALAI_THREADS:-2}
+      LOCALAI_CONTEXT_SIZE: ${LOCALAI_CONTEXT_SIZE:-512}
+      # LocalAI defaults to a 15 MB upload cap; 16 kHz mono is ~115 MB/hour, so
+      # a real meeting blows past it and fails as a bare broken pipe.
+      LOCALAI_UPLOAD_LIMIT: ${LOCALAI_UPLOAD_LIMIT:-512}
+      LOCALAI_MODELS_PATH: /models
+      LOCALAI_LOG_LEVEL: ${LOCALAI_LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    # LocalAI v4 ships an EMPTY /backends, and /v1/models still advertises the
+    # model -- so readiness passes and the request fails "backend not found".
+    # Installed on start if absent, into a volume. README: "LocalAI backends".
+    entrypoint: ["/bin/sh", "/config/localai-entrypoint.sh"]
+    configs:
+      - source: localai_entrypoint_sh
+        target: /config/localai-entrypoint.sh
+        mode: 0444
+    volumes:
+      - localai_models:/models
+      - localai_backends:/backends
+    networks:
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_LOCALAI:-2.0}"
+          # whisper decodes to float32: measured peak 2,270 MB for one hour.
+          # 4 GB covers the two-hour ceiling; 2 GB was OOM-killed.
+          memory: ${MEM_LIMIT_LOCALAI:-4G}
+
+  # Splices a vocabulary prompt into speech-to-text requests -- the difference
+  # between "Chata Nougah" and "Chattanooga". Neither LocalAI nor
+  # integration_openai can carry it, so it sits between them.
+  # README: "The vocabulary prompt, and why it needs a proxy".
+  stt-proxy:
+    image: ${STT_PROXY_IMAGE:-python}:${STT_PROXY_PYTHON_VERSION:-3.13-alpine}
+    entrypoint: ["/bin/sh", "/config/stt-proxy-entrypoint.sh"]
+    volumes:
+      - stt_scratch:/scratch
+    configs:
+      - source: stt_proxy_py
+        target: /proxy.py
+        mode: 0555
+      - source: stt_proxy_entrypoint_sh
+        target: /config/stt-proxy-entrypoint.sh
+        mode: 0444
+    environment:
+      UPSTREAM: ${LOCALAI_INTERNAL_URL:-http://localai:8080}
+      LISTEN_PORT: "9040"
+      # Vocabulary, not sentences: an overlong prompt crowds out audio context
+      # and starts leaking into the transcript.
+      STT_PROMPT: ${STT_PROMPT:-Chattanooga Digital, a cooperative in Chattanooga, Tennessee. Eduity. Nextcloud. Talk. CiviCRM. Hubzilla. Collabora.}
+      # A recording is written here, never held in memory.
+      STT_TMPDIR: /scratch
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          # Transcoding is CPU-bound. Half a core made a long recording take
+          # longer to convert than it took to record.
+          cpus: "${CPU_LIMIT_STT_PROXY:-2}"
+          memory: ${MEM_LIMIT_STT_PROXY:-256M}
