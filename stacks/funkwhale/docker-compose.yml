@@ -1,0 +1,191 @@
+x-funkwhale-env: &funkwhale-env
+  FUNKWHALE_HOSTNAME: ${FUNKWHALE_DOMAIN:?FUNKWHALE_DOMAIN not set}
+  FUNKWHALE_PROTOCOL: https
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY not set}
+  DATABASE_URL: postgresql://${DB_USER:-funkwhale}:${DB_PASSWORD:?DB_PASSWORD not set}@${DB_HOST:-postgres_db}:${DB_PORT:-5432}/${DB_NAME:-funkwhale}
+  CACHE_URL: redis://redis:6379/0
+  # Celery talks to the same Redis on a separate database.
+  CELERYD_CONCURRENCY: ${CELERYD_CONCURRENCY:-2}
+
+  # ANONYMOUS READS ARE THE WHOLE POINT OF THE MOBILE APP.
+  #
+  # The Chattanooga.Digital app is read-only and carries no token: it lists
+  # artists and plays tracks with no account at all. That works only while these
+  # two are true, and `nodeinfo` is what reports them:
+  #   GET /api/v1/instance/nodeinfo/2.0/ -> metadata.library.anonymousCanListen
+  # Flip either to false and the Music tab goes empty with no other symptom.
+  FUNKWHALE_API_AUTHENTICATION_REQUIRED: ${API_AUTHENTICATION_REQUIRED:-false}
+  FUNKWHALE_ANONYMOUS_CAN_LISTEN: ${ANONYMOUS_CAN_LISTEN:-true}
+
+  # Federation. The co-op's argument for Funkwhale over a private silo is that it
+  # speaks ActivityPub like the Mastodon next door.
+  FEDERATION_ENABLED: ${FEDERATION_ENABLED:-true}
+  FEDERATION_DUPLICATE_FETCH_DELAY: ${FEDERATION_DUPLICATE_FETCH_DELAY:-86400}
+
+  # Registration is closed by default: this is a co-op library, not a public host.
+  # Members are made by an admin, and uploads are gated behind that.
+  FUNKWHALE_ACCOUNT_REGISTRATION: ${ACCOUNT_REGISTRATION:-disabled}
+
+  # Object storage. The same MinIO behind s3.chattanooga.digital that Mastodon
+  # already uses, with its own bucket.
+  AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID not set}
+  AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY not set}
+  AWS_STORAGE_BUCKET_NAME: ${S3_BUCKET:?S3_BUCKET not set}
+  AWS_S3_ENDPOINT_URL: ${S3_ENDPOINT:?S3_ENDPOINT not set}
+  # Signed media URLs expire after this many seconds. SEE THE README: the mobile
+  # player must re-resolve rather than cache what /listen/ redirects to.
+  AWS_QUERYSTRING_EXPIRE: ${S3_URL_EXPIRY:-3600}
+
+  EMAIL_CONFIG: ${EMAIL_CONFIG:?EMAIL_CONFIG not set}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:?DEFAULT_FROM_EMAIL not set}
+
+  MEDIA_ROOT: /srv/funkwhale/data/media
+  STATIC_ROOT: /srv/funkwhale/data/static
+  MUSIC_DIRECTORY_PATH: /srv/funkwhale/data/music
+  NESTED_PROXY: "1"
+
+x-networks-internal: &networks-internal
+  - internal_network
+
+x-networks-egress: &networks-egress
+  - internal_network
+  - traefik_net
+
+x-update-stateful: &update-stateful
+  order: stop-first
+  parallelism: 1
+  delay: 5s
+  failure_action: rollback
+  monitor: 60s
+
+x-update-rolling: &update-rolling
+  order: start-first
+  parallelism: 1
+  delay: 5s
+  failure_action: rollback
+  monitor: 60s
+
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config: *update-stateful
+  restart_policy:
+    condition: on-failure
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 60s
+
+x-volumes-funkwhale: &volumes-funkwhale
+  - data:/srv/funkwhale/data
+
+services:
+
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    networks: *networks-internal
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+    volumes:
+      - redis:/data
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_REDIS:-512M}
+        reservations:
+          memory: 128M
+
+  api:
+    image: ${FUNKWHALE_IMAGE:-docker.io/funkwhale/funkwhale}:${FUNKWHALE_VERSION:?FUNKWHALE_VERSION not set}
+    environment: *funkwhale-env
+    networks: *networks-egress
+    depends_on:
+      - redis
+    volumes: *volumes-funkwhale
+    healthcheck:
+      <<: *healthcheck-defaults
+      # nodeinfo rather than / : it is unauthenticated by design, cheap, and it
+      # is the same endpoint the mobile app uses to tell "server down" apart from
+      # "server up but closed to anonymous listeners".
+      test:
+        ["CMD-SHELL", "curl -sf --noproxy localhost localhost:80/api/v1/instance/nodeinfo/2.0/ >/dev/null || exit 1"]
+    deploy:
+      <<: *deploy-defaults
+      update_config: *update-rolling
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${FUNKWHALE_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=80"
+        # Audio files are large and uploads are the point. Traefik's default
+        # buffering would hold a whole album in memory before passing it on.
+        - "traefik.http.middlewares.${INSTANCE_NAME}-buffer.buffering.maxRequestBodyBytes=${UPLOAD_MAX_BYTES:-1073741824}"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-buffer.buffering.memRequestBodyBytes=2097152"
+        - "traefik.http.routers.${INSTANCE_NAME}.middlewares=${INSTANCE_NAME}-buffer"
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_API:-2G}
+        reservations:
+          memory: 512M
+
+  worker:
+    image: ${FUNKWHALE_IMAGE:-docker.io/funkwhale/funkwhale}:${FUNKWHALE_VERSION:?FUNKWHALE_VERSION not set}
+    command: ["celery", "-A", "funkwhale_api.taskapp", "worker", "-l", "INFO", "--concurrency=${CELERYD_CONCURRENCY:-2}"]
+    environment: *funkwhale-env
+    networks: *networks-egress
+    depends_on:
+      - redis
+    volumes: *volumes-funkwhale
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "ps aux | grep -q '[c]elery' || exit 1"]
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WORKER:-2G}
+        reservations:
+          memory: 512M
+
+  beat:
+    image: ${FUNKWHALE_IMAGE:-docker.io/funkwhale/funkwhale}:${FUNKWHALE_VERSION:?FUNKWHALE_VERSION not set}
+    command: ["celery", "-A", "funkwhale_api.taskapp", "beat", "-l", "INFO"]
+    environment: *funkwhale-env
+    networks: *networks-egress
+    depends_on:
+      - redis
+    volumes: *volumes-funkwhale
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "ps aux | grep -q '[c]elery' || exit 1"]
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_BEAT:-512M}
+        reservations:
+          memory: 128M
+
+volumes:
+  data: {}
+  redis: {}
+
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  internal_network:
+    external: true
+    name: ${INTERNAL_NETWORK:-internal_network}

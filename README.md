@@ -9,6 +9,7 @@ its own image pins. Sharing a repo couples nothing about how fast they move.
 | Stack | Service |
 |---|---|
 | [bigcapital](stacks/bigcapital) | Accounting |
+| [funkwhale](stacks/funkwhale) | Federated music hosting |
 | [mastodon](stacks/mastodon) | Fediverse social |
 | [nextcloud](stacks/nextcloud) | Files, Talk, Office, Whiteboard, groupware |
 | [track](stacks/track) | Per-stack resource metering |
