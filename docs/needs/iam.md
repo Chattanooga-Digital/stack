@@ -9,14 +9,26 @@
 
 ## Requirements
 
-- [ ] Target SSO coverage across the portfolio, set before evaluation so the outcome can be judged
+- OIDC
+- SAML
+- MFA: TOTP and passkeys
+- Self-service password reset, profile edit
+- Group claims to apps, so app groups come from the IdP
+- Disabling a user in the IdP locks them out of every app
+- No feature above gated behind a paid tier
+- Target SSO coverage across the portfolio
+
+## Nice to have
+
+- Multi-tenancy. Fallback is one deployment per tenant
+- LDAP server, for apps that only do LDAP
+- Forward auth through Traefik, for apps with no SSO at all
 
 ## Candidates
 
 - [Keycloak](../portfolio/keycloak.md)
 - Authentik
 - Zitadel
-- Vaultwarden
 - Open Identity Platform
 
 ## Notes
