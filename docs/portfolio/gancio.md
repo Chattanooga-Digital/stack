@@ -1,6 +1,6 @@
-# Keycloak
+# Gancio
 
-[Portfolio index](../PORTFOLIO.md), candidate for [IAM](../needs/iam.md)
+[Portfolio index](../PORTFOLIO.md)
 
 | | |
 |---|---|
@@ -9,5 +9,3 @@
 | Verdict | EVAL |
 
 ## Notes
-
----

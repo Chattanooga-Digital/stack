@@ -17,7 +17,8 @@ its own image pins. Sharing a repo couples nothing about how fast they move.
 Each stack's README covers what is specific to it. Read
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) before adding one, and
 [docs/PORTFOLIO.md](docs/PORTFOLIO.md) for where a platform stands, including the
-ones not deployed from here.
+ones not deployed from here. [docs/NEEDS.md](docs/NEEDS.md) tracks capabilities
+we want but have not picked a platform for.
 
 ## Adding a stack
 

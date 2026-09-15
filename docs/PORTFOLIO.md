@@ -90,6 +90,7 @@ decision).
 | [BigCapital](portfolio/bigcapital.md) | Pilot | Ready | FROZEN |
 | [Hubzilla](portfolio/hubzilla.md) | Pilot | Absent | EVAL |
 | [Keycloak](portfolio/keycloak.md) | Proposed | Absent | EVAL |
+| [Gancio](portfolio/gancio.md) | Proposed | Absent | EVAL |
 
 Adding a platform: copy the shape of an existing page into
 `portfolio/<name>.md`, add a row above, and remove the name from the inventory
@@ -97,7 +98,7 @@ below.
 
 ## Everything else evaluated
 
-This is a list of everything previous discussed at one point, add anything else discussed to this list, it needs its own pages and discussion.
+This is a list of everything previous discussed at one point, add anything else discussed to this list, it needs its own pages and discussion. A category we want but have not picked belongs in [Needs](NEEDS.md) with the candidates under it.
 
 ### Files and collaboration
 
@@ -150,11 +151,6 @@ This is a list of everything previous discussed at one point, add anything else 
 - Hylo
 - Matrix, Synapse
 - Mattermost, Rocket.Chat, Element, Revolt
-
-### Identity
-
-- Vaultwarden
-- Open Identity Platform
 
 ### Deployment, panels, orchestration
 
