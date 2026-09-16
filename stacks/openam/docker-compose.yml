@@ -1,0 +1,71 @@
+services:
+  # OpenAM keeps its configuration in an LDAP directory rather than a SQL
+  # database. OpenDJ is the platform's own, and the pairing is what upstream
+  # documents; the embedded alternative puts config inside the app container,
+  # which does not survive a redeploy.
+  opendj:
+    image: openidentityplatform/opendj:${OPENDJ_VERSION:-5.1.2}
+    environment:
+      BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
+      ROOT_USER_DN: ${DIRECTORY_USER_DN:-cn=Directory Manager}
+      ROOT_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
+    volumes:
+      - openam-config:/opt/opendj/data
+    networks:
+      - internal_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_OPENDJ:-512M}
+
+  openam:
+    image: openidentityplatform/openam:${OPENAM_VERSION:?OPENAM_VERSION not set}
+    environment:
+      # OpenAM is served from a Tomcat context path, NOT the domain root. The
+      # router below carries the same prefix, so the console lives at
+      # https://<domain>/auth rather than https://<domain>/.
+      CATALINA_OPTS: -Xms${JVM_HEAP_MIN:-512m} -Xmx${JVM_HEAP_MAX:-1g}
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - openam-home:/usr/openam
+    networks:
+      - traefik_net
+      - internal_network
+    depends_on:
+      - opendj
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN:?DOMAIN not set}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=8080"
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_OPENAM:-1500M}
+
+networks:
+  traefik_net:
+    external: true
+  internal_network:
+    external: true
+
+volumes:
+  openam-config:
+  openam-home:

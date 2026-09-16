@@ -1,0 +1,113 @@
+services:
+  db:
+    image: postgres:${AUTHENTIK_DB_VERSION:-16-alpine}
+    environment:
+      POSTGRES_DB: ${DB_NAME:-authentik}
+      POSTGRES_USER: ${DB_USER:-authentik}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+    volumes:
+      - authentik-db:/var/lib/postgresql/data
+    networks:
+      - internal_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-512M}
+
+  redis:
+    image: redis:${AUTHENTIK_REDIS_VERSION:-7-alpine}
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - authentik-redis:/data
+    networks:
+      - internal_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_REDIS:-192M}
+
+  server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_VERSION:?AUTHENTIK_VERSION not set}
+    command: ["server"]
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${SECRET_KEY:?SECRET_KEY not set}
+      AUTHENTIK_POSTGRESQL__HOST: db
+      AUTHENTIK_POSTGRESQL__NAME: ${DB_NAME:-authentik}
+      AUTHENTIK_POSTGRESQL__USER: ${DB_USER:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      # Seeds the first admin on an EMPTY database only.
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL not set}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - traefik_net
+      - internal_network
+    depends_on:
+      - db
+      - redis
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN:?DOMAIN not set}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=9000"
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_SERVER:-1G}
+
+  # Authentik does NOT work with the server alone: migrations, outposts and every
+  # scheduled task run here. This is why it costs four containers, not two.
+  worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_VERSION:?AUTHENTIK_VERSION not set}
+    command: ["worker"]
+    environment: *authentik-env
+    networks:
+      - internal_network
+    depends_on:
+      - db
+      - redis
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WORKER:-1G}
+
+networks:
+  traefik_net:
+    external: true
+  internal_network:
+    external: true
+
+volumes:
+  authentik-db:
+  authentik-redis:
