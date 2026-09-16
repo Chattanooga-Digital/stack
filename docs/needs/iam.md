@@ -23,6 +23,7 @@
 - Multi-tenancy. Fallback is one deployment per tenant
 - LDAP server, for apps that only do LDAP
 - Forward auth through Traefik, for apps with no SSO at all
+- UX built around self-service for the org, the lower skill threshold the better
 
 ## Candidates
 
