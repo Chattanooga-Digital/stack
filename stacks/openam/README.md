@@ -24,3 +24,17 @@ server.
 
 `CATALINA_OPTS` caps the heap for the same reason Keycloak's does: the JVM otherwise
 sizes itself against the host.
+
+## Accounts: invite links, not passwords we choose
+
+Only ONE credential for this stack is ours to hold: the bootstrap admin in
+`ADMIN_PASSWORD`, which exists to configure the system and nothing else. Real people
+are added by creating the account and letting the system send them a set-password
+link. We never learn their password, so there is nothing for us to store, leak, or be
+asked to rotate.
+
+**Mail is configured in the application, not here.** Unlike Authentik and Zitadel,
+this one takes no SMTP environment variables — it is set in the admin console after
+first boot. That is a manual step, and until it is done every invitation and every
+password reset **fails silently**. Gancio sat in exactly that state from 4 September
+with nobody noticing, so check it deliberately rather than assuming.

@@ -22,3 +22,14 @@ redirect loops.
 **No `_FILE` secret support.** Every credential is a plain environment variable, which
 is the same constraint the rest of this repo already works under, but worth knowing if
 that changes.
+
+## Accounts: invite links, not passwords we choose
+
+Only ONE credential for this stack is ours to hold: the bootstrap admin, which exists
+to configure the system and nothing else. Real people are added by creating the
+account and letting the system send them a set-password link. We never learn their
+password, so there is nothing for us to store, leak, or be asked to rotate.
+
+That makes SMTP load-bearing rather than a nicety, which is why the mail variables are
+required here and have no defaults. An invitation that cannot be sent does not error —
+it just never arrives, and the symptom is a person saying they got no email.

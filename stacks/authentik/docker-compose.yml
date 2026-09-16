@@ -51,6 +51,15 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
       AUTHENTIK_REDIS__HOST: redis
       AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      # MAIL IS NOT OPTIONAL HERE. Invitations and password-reset links are how
+      # people get their accounts, and Authentik's default is localhost:25 --
+      # so with no config it does not error, it silently fails to deliver.
+      AUTHENTIK_EMAIL__HOST: ${SMTP_HOST:?SMTP_HOST not set}
+      AUTHENTIK_EMAIL__PORT: ${SMTP_PORT:-587}
+      AUTHENTIK_EMAIL__USERNAME: ${SMTP_USER:?SMTP_USER not set}
+      AUTHENTIK_EMAIL__PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD not set}
+      AUTHENTIK_EMAIL__USE_TLS: ${SMTP_USE_TLS:-true}
+      AUTHENTIK_EMAIL__FROM: ${MAIL_FROM:?MAIL_FROM not set}
       # Seeds the first admin on an EMPTY database only.
       AUTHENTIK_BOOTSTRAP_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL not set}
       AUTHENTIK_BOOTSTRAP_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
