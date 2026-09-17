@@ -89,7 +89,7 @@ decision).
 | [Drupal](portfolio/drupal.md) | Pilot | Absent | KEEP |
 | [BigCapital](portfolio/bigcapital.md) | Pilot | Ready | FROZEN |
 | [Hubzilla](portfolio/hubzilla.md) | Pilot | Absent | EVAL |
-| [Keycloak](portfolio/keycloak.md) | Proposed | Absent | EVAL |
+| [Keycloak](portfolio/keycloak.md) | Proposed | Ready | EVAL |
 | [Gancio](portfolio/gancio.md) | Proposed | Absent | EVAL |
 
 Adding a platform: copy the shape of an existing page into

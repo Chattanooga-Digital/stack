@@ -1,0 +1,76 @@
+services:
+  db:
+    image: postgres:${KEYCLOAK_DB_VERSION:-18-alpine}
+    environment:
+      POSTGRES_DB: ${DB_NAME:-keycloak}
+      POSTGRES_USER: ${DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+    volumes:
+      - keycloak-db:/var/lib/postgresql/data
+    networks:
+      - internal_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first          # stateful: never two writers on one volume
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-512M}
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:?KEYCLOAK_VERSION not set}
+    command: ["start", "--optimized"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/${DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      KC_HOSTNAME: https://${DOMAIN:?DOMAIN not set}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded        # Traefik terminates TLS
+      KC_HEALTH_ENABLED: "true"
+      # Seeds the first admin on an EMPTY database only. Changing it later does
+      # nothing; use the console. Keycloak 26 renamed these from KEYCLOAK_ADMIN.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      # Cap the heap explicitly. Left alone the JVM sizes itself against the
+      # HOST's RAM, not the container limit, and this node is over-committed.
+      JAVA_OPTS_KC_HEAP: -Xms${JVM_HEAP_MIN:-256m} -Xmx${JVM_HEAP_MAX:-1g}
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - traefik_net
+      - internal_network
+    depends_on:
+      - db
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN:?DOMAIN not set}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=8080"
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_KEYCLOAK:-1500M}
+
+networks:
+  traefik_net:
+    external: true
+  internal_network:
+    external: true
+
+volumes:
+  keycloak-db:
