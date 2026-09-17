@@ -1,0 +1,95 @@
+services:
+  db:
+    image: postgres:${ZITADEL_DB_VERSION:-17-alpine}
+    environment:
+      POSTGRES_DB: ${DB_NAME:-zitadel}
+      POSTGRES_USER: ${DB_USER:-zitadel}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+    volumes:
+      - zitadel-db:/var/lib/postgresql/data
+    networks:
+      - internal_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-512M}
+
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:?ZITADEL_VERSION not set}
+    # start-from-init runs setup then serves, so a fresh volume needs no second step.
+    command: ["start-from-init", "--masterkeyFromEnv", "--tlsMode", "external"]
+    environment:
+      # EXACTLY 32 characters. Zitadel refuses to start otherwise, and it cannot
+      # be changed later without re-encrypting every stored secret.
+      ZITADEL_MASTERKEY: ${MASTERKEY:?MASTERKEY not set}
+      ZITADEL_EXTERNALDOMAIN: ${DOMAIN:?DOMAIN not set}
+      ZITADEL_EXTERNALPORT: "443"
+      ZITADEL_EXTERNALSECURE: "true"          # Traefik terminates TLS
+      ZITADEL_DATABASE_POSTGRES_HOST: db
+      ZITADEL_DATABASE_POSTGRES_PORT: "5432"
+      ZITADEL_DATABASE_POSTGRES_DATABASE: ${DB_NAME:-zitadel}
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: ${DB_USER:-zitadel}
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: ${DB_USER:-zitadel}
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      # MAIL IS NOT OPTIONAL HERE. Zitadel's whole account model is an
+      # initialisation email with a code: create a human user and they get a
+      # link. With no SMTP the user is created and the invitation never arrives.
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_HOST: ${SMTP_HOST:?SMTP_HOST not set}:${SMTP_PORT:-587}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_USER: ${SMTP_USER:?SMTP_USER not set}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD not set}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_TLS: ${SMTP_USE_TLS:-true}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_FROM: ${MAIL_FROM:?MAIL_FROM not set}
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_FROMNAME: ${MAIL_FROM_NAME:-Chattanooga.Digital}
+      # The sender domain is the mail provider's, not this host's. Left true,
+      # Zitadel refuses to send because the From address does not match
+      # ExternalDomain -- and it refuses quietly.
+      ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_SMTPSENDERADDRESSMATCHESINSTANCEDOMAIN: "false"
+      # Seeds the first admin on an EMPTY database only.
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: ${ADMIN_USER:-admin}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - traefik_net
+      - internal_network
+    depends_on:
+      - db
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN:?DOMAIN not set}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=8080"
+        # Zitadel's API is gRPC-Web; Traefik must speak h2c to it.
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.scheme=h2c"
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_ZITADEL:-1G}
+
+networks:
+  traefik_net:
+    external: true
+  internal_network:
+    external: true
+
+volumes:
+  zitadel-db:
