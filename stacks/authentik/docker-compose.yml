@@ -8,7 +8,7 @@ services:
     volumes:
       - authentik-db:/var/lib/postgresql/data
     networks:
-      - internal_network
+      - authentik_internal
     deploy:
       replicas: 1
       placement:
@@ -28,7 +28,7 @@ services:
     volumes:
       - authentik-redis:/data
     networks:
-      - internal_network
+      - authentik_internal
     deploy:
       replicas: 1
       placement:
@@ -66,7 +66,7 @@ services:
       TZ: ${TZ:-America/New_York}
     networks:
       - traefik_net
-      - internal_network
+      - authentik_internal
     depends_on:
       - db
       - redis
@@ -96,7 +96,7 @@ services:
     command: ["worker"]
     environment: *authentik-env
     networks:
-      - internal_network
+      - authentik_internal
     depends_on:
       - db
       - redis
@@ -114,8 +114,11 @@ services:
 networks:
   traefik_net:
     external: true
-  internal_network:
-    external: true
+  # Owned by this stack rather than expected from the cluster. The shared
+  # network exists on production but NOT on staging, so declaring it external
+  # means the stack cannot start there - and staging is where this gets
+  # evaluated. Every other stack on both clusters owns its own the same way.
+  authentik_internal: {}
 
 volumes:
   authentik-db:
