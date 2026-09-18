@@ -24,7 +24,13 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:?KEYCLOAK_VERSION not set}
-    command: ["start", "--optimized"]
+    # NOT `start --optimized`. That flag asserts a build step has already run,
+    # and on a virgin database none has, so Keycloak 26 refuses to start and the
+    # task crash-loops on exit 2 with:
+    #   "The '--optimized' flag was used for first ever server start."
+    # Measured on staging 2026-09-18. `start` performs the build itself when it
+    # needs to, which costs a slower first boot and nothing after that.
+    command: ["start"]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://db:5432/${DB_NAME:-keycloak}
