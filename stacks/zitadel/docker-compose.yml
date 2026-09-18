@@ -8,7 +8,7 @@ services:
     volumes:
       - zitadel-db:/var/lib/postgresql/data
     networks:
-      - internal_network
+      - zitadel_internal
     deploy:
       replicas: 1
       placement:
@@ -61,7 +61,7 @@ services:
       TZ: ${TZ:-America/New_York}
     networks:
       - traefik_net
-      - internal_network
+      - zitadel_internal
     depends_on:
       - db
     deploy:
@@ -88,8 +88,11 @@ services:
 networks:
   traefik_net:
     external: true
-  internal_network:
-    external: true
+  # Owned by this stack rather than expected from the cluster. The shared
+  # network exists on production but NOT on staging, so declaring it external
+  # means the stack cannot start there - and staging is where this gets
+  # evaluated. Every other stack on both clusters owns its own the same way.
+  zitadel_internal: {}
 
 volumes:
   zitadel-db:
