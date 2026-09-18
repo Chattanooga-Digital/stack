@@ -6,7 +6,13 @@ services:
       POSTGRES_USER: ${DB_USER:-keycloak}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
     volumes:
-      - keycloak-db:/var/lib/postgresql/data
+      # postgres:18 takes the volume ONE LEVEL UP from 17 and earlier. Mounting
+      # /var/lib/postgresql/data against 18 makes it refuse to start, printing
+      # pg_upgrade advice rather than an obvious error. docker-library/postgres#37.
+      # The nextcloud stack in this repo already carries this note; this stack
+      # repeated the mistake and it was caught by deploying to staging 2026-09-18.
+      # If you pin KEYCLOAK_DB_VERSION below 18, this path must go back to /data.
+      - keycloak-db:/var/lib/postgresql
     networks:
       - keycloak_internal
     deploy:
