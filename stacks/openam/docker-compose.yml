@@ -12,7 +12,7 @@ services:
     volumes:
       - openam-config:/opt/opendj/data
     networks:
-      - internal_network
+      - openam_internal
     deploy:
       replicas: 1
       placement:
@@ -38,7 +38,7 @@ services:
       - openam-home:/usr/openam
     networks:
       - traefik_net
-      - internal_network
+      - openam_internal
     depends_on:
       - opendj
     deploy:
@@ -63,8 +63,11 @@ services:
 networks:
   traefik_net:
     external: true
-  internal_network:
-    external: true
+  # Owned by this stack rather than expected from the cluster. The shared
+  # network exists on production but NOT on staging, so declaring it external
+  # means the stack cannot start there - and staging is where this gets
+  # evaluated. Every other stack on both clusters owns its own the same way.
+  openam_internal: {}
 
 volumes:
   openam-config:
