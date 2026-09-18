@@ -2,7 +2,7 @@ x-funkwhale-env: &funkwhale-env
   FUNKWHALE_HOSTNAME: ${FUNKWHALE_DOMAIN:?FUNKWHALE_DOMAIN not set}
   FUNKWHALE_PROTOCOL: https
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY not set}
-  DATABASE_URL: postgresql://${DB_USER:-funkwhale}:${DB_PASSWORD:?DB_PASSWORD not set}@${DB_HOST:-postgres_db}:${DB_PORT:-5432}/${DB_NAME:-funkwhale}
+  DATABASE_URL: postgresql://${DB_USER:-funkwhale}:${DB_PASSWORD:?DB_PASSWORD not set}@db:5432/${DB_NAME:-funkwhale}
   CACHE_URL: redis://redis:6379/0
   # Celery talks to the same Redis on a separate database.
   CELERYD_CONCURRENCY: ${CELERYD_CONCURRENCY:-2}
@@ -45,10 +45,10 @@ x-funkwhale-env: &funkwhale-env
   NESTED_PROXY: "1"
 
 x-networks-internal: &networks-internal
-  - internal_network
+  - funkwhale_internal
 
 x-networks-egress: &networks-egress
-  - internal_network
+  - funkwhale_internal
   - traefik_net
 
 x-update-stateful: &update-stateful
@@ -85,6 +85,36 @@ x-volumes-funkwhale: &volumes-funkwhale
 
 services:
 
+  # THIS STACK OWNS ITS DATABASE.
+  #
+  # The first revision pointed DATABASE_URL at an external `postgres_db`, which
+  # does not exist on staging and is not how that cluster is built: gancio,
+  # nextcloud, calcom, discourse and keycloak-test each run their own. Expecting
+  # a shared one meant the stack could not start at all, which is what standing
+  # it up on staging on 2026-09-18 revealed.
+  db:
+    image: postgres:${POSTGRES_VERSION:-16-alpine}
+    environment:
+      POSTGRES_DB: ${DB_NAME:-funkwhale}
+      POSTGRES_USER: ${DB_USER:-funkwhale}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+    networks: *networks-internal
+    volumes:
+      - funkwhale_db:/var/lib/postgresql/data
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-funkwhale} -d ${DB_NAME:-funkwhale}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-1G}
+        reservations:
+          memory: 256M
+
   redis:
     image: redis:${REDIS_VERSION:-7-alpine}
     networks: *networks-internal
@@ -110,6 +140,7 @@ services:
     networks: *networks-egress
     depends_on:
       - redis
+      - db
     volumes: *volumes-funkwhale
     healthcheck:
       <<: *healthcheck-defaults
@@ -147,6 +178,7 @@ services:
     networks: *networks-egress
     depends_on:
       - redis
+      - db
     volumes: *volumes-funkwhale
     healthcheck:
       <<: *healthcheck-defaults
@@ -166,6 +198,7 @@ services:
     networks: *networks-egress
     depends_on:
       - redis
+      - db
     volumes: *volumes-funkwhale
     healthcheck:
       <<: *healthcheck-defaults
@@ -181,11 +214,12 @@ services:
 volumes:
   data: {}
   redis: {}
+  funkwhale_db: {}
 
 networks:
   traefik_net:
     external: true
     name: ${TRAEFIK_NETWORK:-traefik_net}
-  internal_network:
-    external: true
-    name: ${INTERNAL_NETWORK:-internal_network}
+  # Owned by this stack, not expected from the cluster. Staging provides no
+  # shared internal network, and every other stack there creates its own.
+  funkwhale_internal: {}
