@@ -112,6 +112,32 @@ application's; both have to go. A Swarm stack stop scales services to zero and l
 409 while `containers/json` reports nothing running. Remove the exited containers
 first, and treat a 409 as "not reset" rather than retrying past it.
 
+## It ignores the directory's own must-change-password flag
+
+Measured 2026-09-18, and worth knowing before anyone counts on it. OpenDJ supports
+`force-change-on-reset`, and with it on, an administrative password reset does set
+`pwdReset: true` on the entry:
+
+```
+dn: uid=<user>,ou=people,dc=openam,dc=example,dc=org
+pwdReset: true
+```
+
+**OpenAM signs that user straight in anyway.** No prompt, no error, a session token
+first time. The reason is the chain its own configurator builds: realm `/` gets
+`ldapService` containing a single **`DataStore`** module, and DataStore authenticates
+against the identity store without processing the LDAP password-policy response
+controls that carry the flag. The **`LDAP`** module is the one that reads them.
+
+So a forced password change here is a change to the **authentication chain**, not a
+per-user attribute. That is a real difference from the other three: Keycloak takes
+`temporary: true` on the password and Zitadel takes `changeRequired: true`, both
+per-user and both one field. Authentik has no per-user mechanism either, only a
+password-expiry policy measured in days.
+
+`force-change-on-reset` is left **on** in this stack's directory so the flag is set and
+the gap stays visible rather than looking like nobody tried.
+
 ## Accounts: invite links, not passwords we choose
 
 Only ONE credential for this stack is ours to hold: the bootstrap admin in
