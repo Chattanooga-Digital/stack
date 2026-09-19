@@ -19,6 +19,25 @@ session and every issued token. It is not a rotatable credential in the ordinary
 **Bootstrap variables seed an EMPTY database only.** `AUTHENTIK_BOOTSTRAP_EMAIL` and
 `AUTHENTIK_BOOTSTRAP_PASSWORD` are read once, on a database with no users.
 
+## There is no per-user "must change this password"
+
+Measured 2026-09-18. Keycloak takes `temporary: true` when you set a password and
+Zitadel takes `changeRequired: true` — one field, per user, and the person is stopped
+at a change-password screen on first sign-in. Authentik has no equivalent.
+
+What it has instead is a **password-expiry policy measured in days**
+(`/api/v3/policies/password_expiry/`, none configured here) bound into the
+authentication flow, which routes a user to `default-password-change` once their
+`password_change_date` is old enough. That is an age rule, not a
+this-password-was-issued-to-you rule, and it does not express "new account, must be
+changed before first use".
+
+`password_change_date` is on the user object but is a record of when it last changed,
+not a control.
+
+Consequence for provisioning: a password set here is simply the person's password
+until they choose to change it. If that matters, say so in the message that carries it.
+
 ## Accounts: invite links, not passwords we choose
 
 Only ONE credential for this stack is ours to hold: the bootstrap admin, which exists
