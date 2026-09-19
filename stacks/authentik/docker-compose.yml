@@ -1,0 +1,141 @@
+services:
+  db:
+    image: postgres:${AUTHENTIK_DB_VERSION:-16-alpine}
+    environment:
+      POSTGRES_DB: ${DB_NAME:-authentik}
+      POSTGRES_USER: ${DB_USER:-authentik}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+    volumes:
+      - authentik-db:/var/lib/postgresql/data
+    networks:
+      - authentik_internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-512M}
+
+  redis:
+    image: redis:${AUTHENTIK_REDIS_VERSION:-7-alpine}
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - authentik-redis:/data
+    networks:
+      - authentik_internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_REDIS:-192M}
+
+  server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_VERSION:?AUTHENTIK_VERSION not set}
+    command: ["server"]
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${SECRET_KEY:?SECRET_KEY not set}
+      AUTHENTIK_POSTGRESQL__HOST: db
+      AUTHENTIK_POSTGRESQL__NAME: ${DB_NAME:-authentik}
+      AUTHENTIK_POSTGRESQL__USER: ${DB_USER:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      # MAIL IS NOT OPTIONAL HERE. Invitations and password-reset links are how
+      # people get their accounts, and Authentik's default is localhost:25 --
+      # so with no config it does not error, it silently fails to deliver.
+      AUTHENTIK_EMAIL__HOST: ${SMTP_HOST:?SMTP_HOST not set}
+      AUTHENTIK_EMAIL__PORT: ${SMTP_PORT:-587}
+      AUTHENTIK_EMAIL__USERNAME: ${SMTP_USER:?SMTP_USER not set}
+      AUTHENTIK_EMAIL__PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD not set}
+      AUTHENTIK_EMAIL__USE_TLS: ${SMTP_USE_TLS:-true}
+      AUTHENTIK_EMAIL__FROM: ${MAIL_FROM:?MAIL_FROM not set}
+      # Seeds the first admin on an EMPTY database only.
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL not set}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      TZ: ${TZ:-America/New_York}
+    configs:
+      - source: authentik_force_pw
+        target: /blueprints/custom/force-password-reset.yaml
+        mode: 0444
+    networks:
+      - traefik_net
+      - authentik_internal
+    depends_on:
+      - db
+      - redis
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN:?DOMAIN not set}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=9000"
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_SERVER:-1G}
+
+  # Authentik does NOT work with the server alone: migrations, outposts and every
+  # scheduled task run here. This is why it costs four containers, not two.
+  worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_VERSION:?AUTHENTIK_VERSION not set}
+    command: ["worker"]
+    environment: *authentik-env
+    configs:
+      - source: authentik_force_pw
+        target: /blueprints/custom/force-password-reset.yaml
+        mode: 0444
+    networks:
+      - authentik_internal
+    depends_on:
+      - db
+      - redis
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_WORKER:-1G}
+
+networks:
+  traefik_net:
+    external: true
+  # Owned by this stack rather than expected from the cluster. The shared
+  # network exists on production but NOT on staging, so declaring it external
+  # means the stack cannot start there - and staging is where this gets
+  # evaluated. Every other stack on both clusters owns its own the same way.
+  authentik_internal: {}
+
+configs:
+  # Swarm config objects are IMMUTABLE. Bump BLUEPRINT_CONFIG_NAME in the same commit
+  # as any edit to the blueprint, or the redeploy reports success while the old
+  # content keeps running.
+  authentik_force_pw:
+    name: ${BLUEPRINT_CONFIG_NAME:-authentik_force_password_reset_4}
+    file: ./blueprints/force-password-reset.yaml
+
+volumes:
+  authentik-db:
+  authentik-redis:
