@@ -63,10 +63,17 @@ services:
       ZITADEL_FIRSTINSTANCE_ORG_NAME: ${ORG_NAME:-zitadel}
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: ${ADMIN_USER:-admin}
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
-      # Zitadel otherwise demands a password change at the admin's first login.
-      # That would leave ADMIN_PASSWORD above describing a password that no
-      # longer works, so the stack file would stop being the truth. Seed it
-      # already-changed instead and keep the two in agreement.
+      # DELIBERATE TRADE, AND IT IS A REAL ONE. Zitadel otherwise demands a
+      # password change at the admin's first login. Going through with it
+      # produces a password recorded nowhere, while ADMIN_PASSWORD above keeps
+      # describing one that no longer works - so the stack file stops being the
+      # truth about the system and the real credential exists only in someone's
+      # head. Seeding it already-changed keeps those two in agreement.
+      # What it costs: one layer is gone. The control that remains is that the
+      # value is machine-generated and long, not that it gets replaced.
+      # Scope: this is the bootstrap admin on an EVALUATION stack with no real
+      # data. IF ZITADEL IS THE ONE WE PICK, this goes back to "true" and the
+      # changed password gets recorded properly before anything real lands here.
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
       TZ: ${TZ:-America/New_York}
     networks:

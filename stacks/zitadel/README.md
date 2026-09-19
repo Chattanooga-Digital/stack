@@ -34,8 +34,16 @@ a person. It was; you addressed the wrong one.
 **The seeded admin is asked to change its password at first login** unless
 `ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED` is `false`. Letting that
 happen means `ADMIN_PASSWORD` in the stack environment no longer describes a password
-that works, so the stack file stops being the truth about the system. This compose
-seeds it already-changed for that reason.
+that works, so the stack file stops being the truth about the system and the real
+credential lives only in whoever typed it. This compose seeds it already-changed for
+that reason.
+
+That is a trade rather than a free win, and worth naming as one: turning the flag off
+removes a layer. What still protects the account is that the password is
+machine-generated and long, not that it gets replaced on first use. It is acceptable
+here because this is a bootstrap admin on an evaluation stack holding nothing.
+**If Zitadel is the candidate we choose, set it back to `true`** and record the
+changed password properly before any real account or data arrives.
 
 **A 2-factor enrolment prompt follows the password.** It is a prompt and not a policy —
 the page carries a skip — but an automated sign-in that does not expect it simply stops
