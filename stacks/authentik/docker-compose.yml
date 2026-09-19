@@ -133,7 +133,7 @@ configs:
   # as any edit to the blueprint, or the redeploy reports success while the old
   # content keeps running.
   authentik_force_pw:
-    name: ${BLUEPRINT_CONFIG_NAME:-authentik_force_password_reset_3}
+    name: ${BLUEPRINT_CONFIG_NAME:-authentik_force_password_reset_4}
     file: ./blueprints/force-password-reset.yaml
 
 volumes:
