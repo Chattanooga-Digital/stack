@@ -64,6 +64,10 @@ services:
       AUTHENTIK_BOOTSTRAP_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL not set}
       AUTHENTIK_BOOTSTRAP_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
       TZ: ${TZ:-America/New_York}
+    configs:
+      - source: authentik_force_pw
+        target: /blueprints/custom/force-password-reset.yaml
+        mode: 0444
     networks:
       - traefik_net
       - authentik_internal
@@ -95,6 +99,10 @@ services:
     image: ghcr.io/goauthentik/server:${AUTHENTIK_VERSION:?AUTHENTIK_VERSION not set}
     command: ["worker"]
     environment: *authentik-env
+    configs:
+      - source: authentik_force_pw
+        target: /blueprints/custom/force-password-reset.yaml
+        mode: 0444
     networks:
       - authentik_internal
     depends_on:
@@ -119,6 +127,14 @@ networks:
   # means the stack cannot start there - and staging is where this gets
   # evaluated. Every other stack on both clusters owns its own the same way.
   authentik_internal: {}
+
+configs:
+  # Swarm config objects are IMMUTABLE. Bump BLUEPRINT_CONFIG_NAME in the same commit
+  # as any edit to the blueprint, or the redeploy reports success while the old
+  # content keeps running.
+  authentik_force_pw:
+    name: ${BLUEPRINT_CONFIG_NAME:-authentik_force_password_reset_1}
+    file: ./blueprints/force-password-reset.yaml
 
 volumes:
   authentik-db:
