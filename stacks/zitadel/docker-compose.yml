@@ -56,8 +56,18 @@ services:
       # ExternalDomain -- and it refuses quietly.
       ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_SMTPSENDERADDRESSMATCHESINSTANCEDOMAIN: "false"
       # Seeds the first admin on an EMPTY database only.
+      # The org NAME decides the login name, so pin it rather than inheriting
+      # Zitadel's default: the admin signs in as <user>@<org>.<domain>, and a
+      # bare "admin" resolves to something else entirely and is rejected with
+      # Errors.User.NotHuman, which reads like the account was never created.
+      ZITADEL_FIRSTINSTANCE_ORG_NAME: ${ORG_NAME:-zitadel}
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: ${ADMIN_USER:-admin}
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
+      # Zitadel otherwise demands a password change at the admin's first login.
+      # That would leave ADMIN_PASSWORD above describing a password that no
+      # longer works, so the stack file would stop being the truth. Seed it
+      # already-changed instead and keep the two in agreement.
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
       TZ: ${TZ:-America/New_York}
     networks:
       - traefik_net

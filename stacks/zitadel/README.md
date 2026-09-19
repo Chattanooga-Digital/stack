@@ -23,6 +23,27 @@ redirect loops.
 is the same constraint the rest of this repo already works under, but worth knowing if
 that changes.
 
+## Signing in as the seeded admin, which is where an hour goes
+
+**The login name is not `admin`.** Zitadel qualifies it with the org domain, so it is
+`<ADMIN_USER>@<ORG_NAME>.<DOMAIN>` — by default `admin@zitadel.<your domain>`. A bare
+`admin` does resolve, passes the login-name step, and is then rejected at the password
+step with **`Errors.User.NotHuman`**, which reads like the account was never created as
+a person. It was; you addressed the wrong one.
+
+**The seeded admin is asked to change its password at first login** unless
+`ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED` is `false`. Letting that
+happen means `ADMIN_PASSWORD` in the stack environment no longer describes a password
+that works, so the stack file stops being the truth about the system. This compose
+seeds it already-changed for that reason.
+
+**A 2-factor enrolment prompt follows the password.** It is a prompt and not a policy —
+the page carries a skip — but an automated sign-in that does not expect it simply stops
+on an HTML page with no error in it.
+
+Both of the above apply on an EMPTY database only. Changing them later needs a fresh
+deploy, not a redeploy.
+
 ## Accounts: invite links, not passwords we choose
 
 Only ONE credential for this stack is ours to hold: the bootstrap admin, which exists
