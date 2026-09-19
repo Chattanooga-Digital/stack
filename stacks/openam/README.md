@@ -112,31 +112,65 @@ application's; both have to go. A Swarm stack stop scales services to zero and l
 409 while `containers/json` reports nothing running. Remove the exited containers
 first, and treat a 409 as "not reset" rather than retrying past it.
 
-## It ignores the directory's own must-change-password flag
+## Forcing a password change costs you the console login, and nothing says so
 
-Measured 2026-09-18, and worth knowing before anyone counts on it. OpenDJ supports
-`force-change-on-reset`, and with it on, an administrative password reset does set
-`pwdReset: true` on the entry:
+Measured 2026-09-18, end to end. Three facts, in the order they bite.
+
+**1. The default chain ignores the directory.** Turn on `force-change-on-reset` in
+OpenDJ and an administrative reset does set `pwdReset: true` on the entry. OpenAM signs
+that user straight in regardless. Its configurator builds realm `/` with `ldapService`
+containing a single **`DataStore`** module, and DataStore does not process the LDAP
+password-policy response controls that carry the flag.
+
+**2. The `LDAP` module does honour it, and it is already configured.** The instance
+ships pointed at the directory with `beheraPasswordPolicySupportEnabled: true`, which is
+the setting that reads those controls. Authenticating against it directly proves the
+difference without changing anything:
 
 ```
-dn: uid=<user>,ou=people,dc=openam,dc=example,dc=org
-pwdReset: true
+authIndexType=module&authIndexValue=LDAP       -> Old Password / New Password / Confirm
+authIndexType=module&authIndexValue=DataStore  -> signs straight in
 ```
 
-**OpenAM signs that user straight in anyway.** No prompt, no error, a session token
-first time. The reason is the chain its own configurator builds: realm `/` gets
-`ldapService` containing a single **`DataStore`** module, and DataStore authenticates
-against the identity store without processing the LDAP password-policy response
-controls that carry the flag. The **`LDAP`** module is the one that reads them.
+Note the instance names are lowercase in the config API (`ldap`, `datastore`) and
+capitalised when naming a module to authenticate against (`LDAP`, `DataStore`). Using
+the wrong case returns `Authentication Module Not Found`, which reads like the module
+does not exist.
 
-So a forced password change here is a change to the **authentication chain**, not a
-per-user attribute. That is a real difference from the other three: Keycloak takes
-`temporary: true` on the password and Zitadel takes `changeRequired: true`, both
-per-user and both one field. Authentik has no per-user mechanism either, only a
-password-expiry policy measured in days.
+**3. Switching to it locks `amadmin` out of the default login.** `amadmin` lives in the
+configuration store, not under the user search base, so it cannot bind through the LDAP
+module at all. Point the realm's organisation chain at LDAP and `amadmin` starts
+failing with a bare `Authentication Failed`. A chain of `LDAP SUFFICIENT` then
+`DataStore SUFFICIENT` does **not** rescue it, and is worth knowing it was tried.
 
-`force-change-on-reset` is left **on** in this stack's directory so the flag is set and
-the gap stays visible rather than looking like nobody tried.
+The workable arrangement, which is what this instance now runs:
+
+```
+chain userLdapService = [ LDAP REQUIRED ]
+iplanet-am-auth-org-config      = userLdapService   <- real users, forced change
+iplanet-am-auth-admin-auth-module = ldapService     <- amadmin, still DataStore
+```
+
+`amadmin` then signs in at **`/openam/XUI/?service=ldapService#login/`**. The plain
+`/openam/XUI/#login/` will fail for it, because XUI calls the organisation chain.
+
+### Two things about applying it
+
+**The REST config endpoint will not make this change.** `PUT` on
+`/json/realms/root/realm-config/authentication` returns `Resource '' not found`, and
+`PATCH` returns `Patch not supported`. Use **`ssoadm`**, which the image ships
+unconfigured at `/usr/openam/ssoadmintools`; run its `setup` first. Creating the chain
+itself *is* fine over REST.
+
+**`ssoadm`'s password file must be mode 400.** At 600 it refuses with *"Password file
+needs to be readonly by owner only"* — the same family of trap as a `chmod +x` on a
+`mktemp` file landing at 0700.
+
+🔴 **This configuration is NOT in the compose file**, because it is realm state inside
+the configuration store rather than a container setting. A fresh deploy of this stack
+comes up with the DataStore chain and no forced password change. If OpenAM is the
+candidate we pick, this belongs in a scripted post-install step, not in a runbook step
+somebody has to remember.
 
 ## Accounts: invite links, not passwords we choose
 
