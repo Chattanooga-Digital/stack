@@ -60,6 +60,29 @@ discovery, so a baked-in `true` would restore the flag right after someone clear
 and that person could never finish logging in. It is per-person state; it belongs on
 the API.
 
+### Mail, and the trap that hid it
+
+`AUTHENTIK_EMAIL__*` is read from the stack environment at runtime, so unlike Zitadel's
+instance settings it does take effect on a redeploy. **This stack was deployed with
+`SMTP_HOST=smtp.invalid`** — a placeholder that satisfies the compose's `${SMTP_HOST:?}`
+requirement while guaranteeing nothing is ever sent, and nothing errors to say so.
+
+With a real relay set, the blueprint's recovery flow gives two independent routes in:
+
+| route | who starts it | needs mail |
+|---|---|---|
+| `POST /api/v3/core/users/<pk>/recovery/` | an admin; **returns** the link to carry | no |
+| the login page's recovery link | the person themselves | yes |
+
+The first is why links were possible here long before mail was. `recovery_email/` is the
+one that sends, and it additionally requires an `email_stage` argument — it returns
+`400 {"email_stage":["This field is required."]}` without one.
+
+The self-service route needs the identification and email stages to be **skipped** when
+the flow was entered through a minted link, or a person who is already identified gets
+asked who they are. That is what `chattanooga-recovery-only-if-self-started` does, reading
+`request.context["is_restored"]`.
+
 ### How the file reaches the container
 
 authentik applies any blueprint YAML under `/blueprints`, and the **worker** is what
