@@ -218,6 +218,32 @@ it.
 | OpenAM | `https://openam.staging.chattanooga.digital/openam/` | short name |
 | Zitadel | `https://zitadel.staging.chattanooga.digital/` | email address |
 
+**There is a walkthrough: [Walking the four candidates](iam-walkthrough.md).** It
+starts by having you create a least-privilege twin of yourself on each system,
+because every requirement in the table above is experienced by somebody who is
+*not* an administrator, and all five of you are now administrators.
+
+🔴 **Admin was measured on 2026-09-22 and it was granted on one system of four,
+not four.** William's Deck card #103 asked for admin accounts for all five
+evaluators. Five accounts existed everywhere; the privilege existed only on
+Keycloak. Authentik and Zitadel were corrected the same day. OpenAM was not, and
+cannot be — see the walkthrough's [OpenAM
+section](iam-walkthrough.md#openam) — because its `amadmin` credential is not
+held in the stack environment or any secret store we control.
+
+| | evaluator accounts are admin | granted |
+|---|---|---|
+| Keycloak | yes | at deployment |
+| Authentik | yes | 2026-09-22, via a `Co-op Admins` group |
+| Zitadel | yes | 2026-09-22, `IAM_OWNER` + `ORG_OWNER` |
+| OpenAM | **no** | blocked |
+
+This matters for how Rob's notes above are read. They were taken from a
+non-administrator seat on three of the four, which is the right seat for a
+password reset and the wrong one for everything else. **No admin console,
+delegation model or policy screen on any candidate has been evaluated by
+anybody.**
+
 Try the things above that have an empty box. Record what you checked by ticking
 it with your initials and the date. Anything that surprised you, good or bad,
 goes as a note on that candidate's portfolio page. If a mail never turns up, that
