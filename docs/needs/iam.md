@@ -70,7 +70,7 @@ access; all over standard protocols.
 | SAML provider, verified with a real client | [ ] | [ ] | [ ] | [ ] |
 | MFA: TOTP enrolled and used | [ ] | [ ] | [ ] | [ ] |
 | MFA: passkey enrolled and used | [ ] | [ ] | [ ] | [ ] |
-| Self-service password reset | [x] `JP 2026-09-19` | [x] `JP 2026-09-19` | [x] `JP 2026-09-19` | [x] `JP 2026-09-19` |
+| Self-service password reset | [x] `JP 2026-09-19` `RA 2026-09-21` | [x] `JP 2026-09-19` `RA 2026-09-21` | [x] `JP 2026-09-19` `RA 2026-09-21` | [x] `JP 2026-09-19` `RA 2026-09-21` |
 | Self-service profile edit | [ ] | [ ] | [ ] | [ ] |
 | Group claims reach a client app | [ ] | [ ] | [ ] | [ ] |
 | Disabling the user locks them out of a client app | [ ] | [ ] | [ ] | [ ] |
@@ -80,6 +80,39 @@ Password reset: verified by requesting it from each login page and receiving the
 set-password mail from each system at a real mailbox on 2026-09-19. Keycloak
 offers *Forgot Your Password*, Zitadel *Reset Password*, OpenAM advertises
 `forgotPassword: true`, Authentik exposes its recovery flow on the login page.
+
+**Rob Aitchison walked the whole reset flow on all four, 2026-09-21**, which is the
+first evaluation anyone has done by using the systems rather than reading about
+them. His notes are scoped to password reset and deliberately carry no ranking.
+Quoted rather than summarised, because the wording is the finding:
+
+| | Rob, 2026-09-21 |
+|---|---|
+| Keycloak | *"Still has an active UI in click-through after submission - so I ask myself, did it work?"* |
+| Authentik | *"Landed at a better next steps style page - had to login twice after reset, may have been a one-time issue"* |
+| OpenAM | *"Gives first and last name submission as an additional option for reset... Same loop Will mentioned, must reset again after resetting + says the password must be different (how would it know?)"* |
+| Zitadel | *"Register flow is different - welcome back wording on page. Tried raitchison and did not work, raitch@pm.me did. Received password has changed email unlike other three systems. Sent immediately to 2-factor screen on next login."* |
+
+Only Keycloak leaves the person unsure whether the reset worked, which matters more
+for the co-op's stated goal of a low skill threshold than any feature in the table
+above. Only Zitadel confirms the change by mail.
+
+🔴 **Two of these are ours, not the products', and must not be scored against the
+candidate.**
+
+- **The OpenAM double reset is a setting we chose.** Measured on the staging
+  directory 2026-09-22: `ds-cfg-force-change-on-reset: true`. A self-service reset
+  counts as an administrative reset, so the account is flagged and the login chain
+  demands a second change immediately. Remove that flag and the loop goes with it.
+  Rob's aside — *"how would it know?"* — also has an answer, and it is not password
+  history: `ds-cfg-password-history-count: 0` and `ds-cfg-password-history-duration:
+  0 seconds`, so nothing is remembered. It is comparing against the **current**
+  password, which it holds.
+- **The Zitadel login name is a defect in the invitation, not the product.** Zitadel
+  qualifies login names with the org domain, which `stacks/zitadel/README.md` already
+  documents; the invitation led with the short username anyway, so Rob tried
+  `raitchison`, it failed, and his email address worked. Everyone else was sent the
+  same wording.
 
 Paid tier: Authentik ships an `authentik/enterprise/` directory under a separate
 EE licence (present at tag 2026.8.3). Which features sit behind it, and whether
