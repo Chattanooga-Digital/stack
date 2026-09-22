@@ -6,6 +6,18 @@ This is the companion to the [evaluation checklist](iam.md#evaluation-checklist)
 The checklist says *what* to decide; this says *what to do on a Tuesday evening*
 to be able to decide it.
 
+🔴 **The evaluators read this in Nextcloud, not here.** The same walkthrough is a
+page in the **Operations** collective, whose five members are exactly the five
+evaluators:
+
+https://cloud.chattanooga.digital/apps/collectives/Operations
+
+That is the copy people will actually open, and where their notes go. This file
+is the version-controlled copy; if the two drift, the collective is what the
+evaluation was run against. Evaluation notes were, until 2026-09-22, sitting in
+Greg's and Rob's **private** folders where neither could read the other's, which
+is the problem the collective page exists to stop repeating.
+
 It exists because of a measurement taken on 2026-09-22. William's Deck card #103
 asked for admin accounts for Greg, Adam, Jon, Rob and Will on all four
 candidates. Five accounts did exist on all four. **Admin existed on one.** The
