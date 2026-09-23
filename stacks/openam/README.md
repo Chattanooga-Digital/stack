@@ -304,9 +304,21 @@ forgerockEmailServiceSMTPMessage     = Use the link below to choose a password f
 **Both of these are services ASSIGNED to the root realm**, not only global defaults:
 each has its own `ou=default,ou=OrganizationConfig` entry in the 09-18 directory,
 created about 11 hours after configuration. The first record here gave the DNs but
-not that consequence, and missed the message body. A rebuild that set the defaults
-alone ran the reset flow to `emailValidation` and sent **no mail** — no error, no
-attempt, nothing under `debug/`. `post-install` now writes both places.
+not that, and missed the message body. `post-install` writes both places, to
+reproduce 09-18; whether the realm copy is *required* has not been tested.
+
+**Testing the reset over REST takes TWO calls, and the first sends nothing.**
+`submitRequirements` with `{"input":{"queryFilter":"uid eq \"<uid>\""}}` answers
+`emailValidation` / `initial` — the flow is now *asking* for a hidden
+`querystringParams`, which the XUI supplies. Only the second call, with the token and
+`{"input":{"querystringParams":"{}"}}`, sends the mail and answers `validateCode`.
+`querystringParams` must be a **string**: an object gets a 500 whose only trace is
+`debug/CoreSystem`: *"/input/querystringParams: Expecting a java.lang.String"*.
+Measured 2026-09-23: stopping after the first call looks exactly like "mail is broken"
+— 200, no error, no mail, nothing in the logs — and was misread that way once. The
+two-call version delivered to Gmail in under a second. The mail arrives with OpenAM's
+stock subject, *"Forgotten password email"*, from the self-service settings, not the
+mail service's own subject.
 
 **Accounts** — five entries under `ou=people,<basedn>`: `glaudeman`, `azahorscak`,
 `turtlewolfe`, `raitchison`, `wroush`, all `inetUserStatus: Active`, each carrying

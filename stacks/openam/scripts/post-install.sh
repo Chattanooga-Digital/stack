@@ -200,9 +200,10 @@ step "point the realm at it" adm set-svc-attrs -e / -s iPlanetAMAuthService \
 #     these; a REST write to the realm alone changed nothing on 09-18.
 #   - the ROOT REALM, as an assigned service (add-svc-realm, or set-realm-svc-attrs
 #     once assigned). The 09-18 directory has its own ou=default,ou=OrganizationConfig
-#     entry for MailServer and for selfService, added ~11 hours after configuration.
-#     A rebuild with defaults only -- measured 2026-09-23 -- ran the reset flow to
-#     "emailValidation" and sent NO mail: no error, no attempt, nothing in debug/.
+#     entry for MailServer and for selfService, added ~11 hours after configuration,
+#     and this reproduces it. Whether the realm copy is REQUIRED is untested: an
+#     earlier version of this comment said defaults alone sent no mail, but that
+#     came from a test that never reached the send step (see the README).
 # Values go in owner-only datafiles (ssoadm -D), so the SMTP password is never in
 # argv, and each file is deleted as soon as it is used.
 
