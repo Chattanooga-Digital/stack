@@ -62,9 +62,20 @@ dc: openam
 The configurator reports this as `Invalid Suffix`, which names neither the cause nor
 the fix.
 
+**And the two containers under it.** The configurator writes its demo user into
+`ou=people` and never creates it. The 09-18 directory backup shows `ou=people` and
+`ou=groups` (plain `organizationalUnit`) created by Directory Manager 28 seconds after
+the base entry and before the configurator's first write — by hand, like the base entry,
+and recorded nowhere until the first fresh rebuild failed on it. That failure looks
+exactly like Trap 2 below (a bare `error code :500` at "Creating demo user"); the
+difference is only in `debug/IdRepo`: *"parent entry ou=people,… does not exist"*.
+`dj-prep` creates the base entry and both containers.
+
 ### Trap 2 — an external user store needs OpenAM's schema loaded into it
 
-**This is the one that looks like a platform incompatibility and is not.** The
+**This is the one that looks like a platform incompatibility and is not** — and the
+same bare 500 also means a missing `ou=people` (above), so read `debug/IdRepo` before
+deciding which. The
 configurator runs all the way through registering services, configuring the system and
 configuring the server instance, then fails on its very last step with a bare
 `Configuration Failed. The server returned error code :500`. The real error is only in

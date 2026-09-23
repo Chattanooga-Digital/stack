@@ -18,7 +18,7 @@ set -u
 : "${BASE_DN:=dc=openam,dc=example,dc=org}"
 DC=$(echo "$BASE_DN" | sed 's/^dc=//; s/,.*//')
 PW=$(mktemp); printf '%s' "$DIRECTORY_PASSWORD" > "$PW"; chmod 0400 "$PW"
-trap 'rm -f "$PW" /tmp/step.out /tmp/policy.ldif /tmp/base.ldif' EXIT
+trap 'rm -f "$PW" /tmp/step.out /tmp/policy.ldif /tmp/base.ldif /tmp/ou.ldif' EXIT
 
 fail=0
 step() {
@@ -46,6 +46,25 @@ else
   step "create the base entry" /opt/opendj/bin/ldapmodify -a -h opendj -p 1389 \
     -D "cn=Directory Manager" -j "$PW" -f /tmp/base.ldif
 fi
+
+# ---- Trap 1b: the two containers the configurator writes into
+# Measured from the 09-18 directory backup: ou=people and ou=groups were created by
+# Directory Manager 28 seconds after the base entry and ~50 seconds BEFORE the
+# configurator's first entry -- by hand, recorded nowhere. Without ou=people the
+# configurator runs to its very last step, "Creating demo user", and fails with a
+# bare "error code :500"; only debug/IdRepo says "parent entry ou=people ... does
+# not exist". Found on the first fresh 16.1.3 rebuild, 2026-09-23.
+for ou in people groups; do
+  if /opt/opendj/bin/ldapsearch -h opendj -p 1389 -D "cn=Directory Manager" -j "$PW" \
+       -b "ou=$ou,$BASE_DN" -s base "(objectClass=*)" dn >/dev/null 2>&1; then
+    echo "skip: ou=$ou exists"
+  else
+    printf 'dn: ou=%s,%s\nobjectClass: top\nobjectClass: organizationalUnit\nou: %s\n' \
+      "$ou" "$BASE_DN" "$ou" > /tmp/ou.ldif
+    step "create ou=$ou" /opt/opendj/bin/ldapmodify -a -h opendj -p 1389 \
+      -D "cn=Directory Manager" -j "$PW" -f /tmp/ou.ldif
+  fi
+done
 
 # The schema is vendored per OpenAM version and arrives as Swarm configs under
 # /schema. Loading one version's schema under another's OpenAM is the drift this
