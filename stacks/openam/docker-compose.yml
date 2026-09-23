@@ -162,7 +162,7 @@ configs:
   # Swarm configs are IMMUTABLE. Bump the name when the script changes, or the
   # redeploy fails with a config-already-exists error that names nothing useful.
   opendj_prep_sh:
-    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_3}
+    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_4}
     file: ./scripts/opendj-prep.sh
   openam_post_install_sh:
     name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_2}
