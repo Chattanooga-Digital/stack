@@ -18,7 +18,7 @@ set -u
 : "${BASE_DN:=dc=openam,dc=example,dc=org}"
 DC=$(echo "$BASE_DN" | sed 's/^dc=//; s/,.*//')
 PW=$(mktemp); printf '%s' "$DIRECTORY_PASSWORD" > "$PW"; chmod 0400 "$PW"
-trap 'rm -f "$PW" /tmp/step.out' EXIT
+trap 'rm -f "$PW" /tmp/step.out /tmp/policy.ldif /tmp/base.ldif' EXIT
 
 fail=0
 step() {
@@ -81,9 +81,25 @@ done
 # OpenAM sets that password by binding as the administrator and the directory
 # cannot tell that apart from a real admin reset. Keycloak and Zitadel can. That
 # is a finding about OpenAM, not a misconfiguration; see ../README.md.
-step "force-change-on-reset" /opt/opendj/bin/dsconfig set-password-policy-prop \
-  --hostname opendj --port 4444 --bindDN "cn=Directory Manager" --bindPasswordFile "$PW" \
-  --trustAll --no-prompt --policy-name "Default Password Policy" --set force-change-on-reset:true
+#
+# ldapmodify on cn=config, NOT dsconfig. dsconfig is only an LDAP client that sends
+# this same modify to cn=config, and the server validates it the same way -- but it
+# first checks the version of a LOCAL installation, and this container has none:
+# run.sh never ran here, so there is no instance.loc and no config/buildinfo.
+# Measured on the first fresh 16.1.3 rebuild: "The version of the installed OpenDJ
+# could not be determined because the version file '/opt/opendj/config/buildinfo'
+# could not be found". It had never run on a fresh stack before; 09-18 did it by hand.
+POLICY="cn=Default Password Policy,cn=Password Policies,cn=config"
+printf 'dn: %s\nchangetype: modify\nreplace: ds-cfg-force-change-on-reset\nds-cfg-force-change-on-reset: true\n' \
+  "$POLICY" > /tmp/policy.ldif
+step "force-change-on-reset" /opt/opendj/bin/ldapmodify -h opendj -p 1389 \
+  -D "cn=Directory Manager" -j "$PW" -f /tmp/policy.ldif
+# Read it back: a modify that "succeeds" against the wrong entry changes nothing.
+got=$(/opt/opendj/bin/ldapsearch -h opendj -p 1389 -D "cn=Directory Manager" -j "$PW" \
+        -b "$POLICY" -s base "(objectClass=*)" ds-cfg-force-change-on-reset 2>/dev/null \
+      | sed -n 's/^ds-cfg-force-change-on-reset: //p')
+if [ "$got" = "true" ]; then echo "ok: force-change-on-reset reads back true"
+else echo "FAILED: force-change-on-reset reads back '${got:-nothing}'"; fail=1; fi
 
 echo
 if [ "$fail" -eq 0 ]; then

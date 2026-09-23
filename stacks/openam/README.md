@@ -130,6 +130,17 @@ work once and then keep serving the **old** WAR after an upgrade, because an exi
 volume is never refilled from the image — the same trap `post-install.sh` guards for
 `openam-home`. And the conventions forbid fetching code at deploy time.
 
+**Why not the OpenDJ image's own bootstrap.** `run.sh` runs `bootstrap/setup.sh` on
+first start, and it *can* create the base entry (`ADD_BASE_ENTRY=--addBaseEntry`) and
+load LDIFs from `bootstrap/schema/`. It runs **once**, on an empty data volume, so it
+can never add the schema a later OpenAM version needs; and its `bootstrap/data/` path
+silently sets `allow-pre-encoded-passwords:true` on the default password policy.
+`dj-prep` re-runs on every deploy and reconciles instead. For the same reason it
+cannot use `dsconfig`: the tool first checks the version of a *local* installation,
+and a container where `run.sh` never ran has none (`config/buildinfo` not found), so
+the password policy is set with the same LDAP modify `dsconfig` would send, and read
+back.
+
 **On an OpenAM upgrade**, re-extract from the new image, then rename the
 `openam_schema_<version>_*` config names in `docker-compose.yml` to match:
 
