@@ -70,44 +70,36 @@ services:
   # comes up with the stock DataStore chain, no self-service, no mail and no
   # accounts - a different system from the one being evaluated.
 
-  # The schema LDIFs ship inside the OpenAM image; the LDAP tools ship inside
-  # the OpenDJ one. Neither image has both, so the files move across on a shared
-  # volume rather than either container growing a dependency it should not have.
-  ldif-export:
-    image: openidentityplatform/openam:${OPENAM_VERSION:?OPENAM_VERSION not set}
-    command:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        SRC=/usr/local/tomcat/webapps/openam/WEB-INF/template/ldif/opendj
-        for f in opendj_user_schema opendj_dashboard opendj_deviceprint \
-                 opendj_kba opendj_oathdevices opendj_pushdevices; do
-          cp "$$SRC/$$f.ldif" /ldif/ && echo "exported $$f.ldif"
-        done
-        touch /ldif/.export-done
-    volumes:
-      - openam-ldif:/ldif
-    networks:
-      - openam_internal
-    deploy:
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: none
-
+  # OpenAM's schema LDIFs are vendored in ./schema/, extracted byte-identical from
+  # the WAR in the deployed image (see ../README.md for how, and why not at deploy
+  # time: neither image carries unzip, jar or python, and a volume over Tomcat's
+  # webapps would keep serving an old WAR after an upgrade). dj-prep refuses to
+  # run if schema/VERSION differs from OPENAM_VERSION.
+  #
+  # Runs as root: it writes its completion marker onto a fresh, root-owned volume.
+  # healthcheck disabled: both images declare a HEALTHCHECK for a server this
+  # one-shot never starts, and Swarm KILLED the first run as "unhealthy" (exit 137).
   dj-prep:
     image: openidentityplatform/opendj:${OPENDJ_VERSION:-5.1.2}
+    user: "0"
     entrypoint: ["/bin/sh", "/opendj-prep.sh"]
+    healthcheck:
+      disable: true
     configs:
       - source: opendj_prep_sh
         target: /opendj-prep.sh
         mode: 0555
+      - {source: openam_schema_version, target: /schema/VERSION, mode: 0444}
+      - {source: openam_schema_user, target: /schema/opendj_user_schema.ldif, mode: 0444}
+      - {source: openam_schema_dashboard, target: /schema/opendj_dashboard.ldif, mode: 0444}
+      - {source: openam_schema_deviceprint, target: /schema/opendj_deviceprint.ldif, mode: 0444}
+      - {source: openam_schema_kba, target: /schema/opendj_kba.ldif, mode: 0444}
+      - {source: openam_schema_oathdevices, target: /schema/opendj_oathdevices.ldif, mode: 0444}
+      - {source: openam_schema_pushdevices, target: /schema/opendj_pushdevices.ldif, mode: 0444}
     environment:
       DIRECTORY_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
       BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
+      OPENAM_VERSION: ${OPENAM_VERSION:?OPENAM_VERSION not set}
     volumes:
       - openam-ldif:/ldif
     networks:
@@ -123,6 +115,8 @@ services:
   post-install:
     image: openidentityplatform/openam:${OPENAM_VERSION:?OPENAM_VERSION not set}
     entrypoint: ["/bin/sh", "/post-install.sh"]
+    healthcheck:
+      disable: true    # the image's check probes a Tomcat this one-shot never starts
     configs:
       - source: openam_post_install_sh
         target: /post-install.sh
@@ -144,6 +138,7 @@ services:
       SMTP_FROM: ${SMTP_FROM:-no-reply@get.chattanooga.digital}
     volumes:
       - openam-home:/usr/openam
+      - openam-ldif:/ldif:ro   # only to see dj-prep's .prep-done marker
     networks:
       - openam_internal
     deploy:
@@ -167,11 +162,20 @@ configs:
   # Swarm configs are IMMUTABLE. Bump the name when the script changes, or the
   # redeploy fails with a config-already-exists error that names nothing useful.
   opendj_prep_sh:
-    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_1}
+    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_2}
     file: ./scripts/opendj-prep.sh
   openam_post_install_sh:
-    name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_1}
+    name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_2}
     file: ./scripts/post-install.sh
+  # Content is bound to the OpenAM version, so the version is in the name: an
+  # upgrade brings new files AND new config names, never a clash with the old.
+  openam_schema_version:     {name: openam_schema_16_1_3_version,     file: ./schema/VERSION}
+  openam_schema_user:        {name: openam_schema_16_1_3_user,        file: ./schema/opendj_user_schema.ldif}
+  openam_schema_dashboard:   {name: openam_schema_16_1_3_dashboard,   file: ./schema/opendj_dashboard.ldif}
+  openam_schema_deviceprint: {name: openam_schema_16_1_3_deviceprint, file: ./schema/opendj_deviceprint.ldif}
+  openam_schema_kba:         {name: openam_schema_16_1_3_kba,         file: ./schema/opendj_kba.ldif}
+  openam_schema_oathdevices: {name: openam_schema_16_1_3_oathdevices, file: ./schema/opendj_oathdevices.ldif}
+  openam_schema_pushdevices: {name: openam_schema_16_1_3_pushdevices, file: ./schema/opendj_pushdevices.ldif}
 
 volumes:
   openam-config:

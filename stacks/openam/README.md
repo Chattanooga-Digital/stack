@@ -112,6 +112,46 @@ application's; both have to go. A Swarm stack stop scales services to zero and l
 409 while `containers/json` reports nothing running. Remove the exited containers
 first, and treat a 409 as "not reset" rather than retrying past it.
 
+## The schema is vendored, per OpenAM version, in `schema/`
+
+Trap 2 below needs OpenAM's six schema LDIFs loaded into OpenDJ **before** the
+configurator runs. They ship only inside the WAR, under
+`WEB-INF/template/ldif/opendj/`, and they are vendored here byte-identical — extracted
+from the WAR of the image actually deployed,
+`openidentityplatform/openam:16.1.3@sha256:b55b2567208bf99ea47537c40231b49a8fc11c93cf1f4c26e51ca026a137c5a9`.
+`SHA256SUMS` records each file. All six modify `cn=schema` only and carry no `@TOKEN@`
+placeholders, so they load as-is. `dj-prep` mounts them as Swarm configs and **refuses
+to run if `schema/VERSION` differs from `OPENAM_VERSION`**.
+
+Why not extract them at deploy time, measured 2026-09-23 on the 16.1.3 image: it carries
+no `unzip`, `jar`, `python3`, `busybox` or `bsdtar`, and Tomcat unpacks the WAR only when
+it *starts*, which a one-shot never does. A named volume over Tomcat's `webapps` would
+work once and then keep serving the **old** WAR after an upgrade, because an existing
+volume is never refilled from the image — the same trap `post-install.sh` guards for
+`openam-home`. And the conventions forbid fetching code at deploy time.
+
+**On an OpenAM upgrade**, re-extract from the new image, then rename the
+`openam_schema_<version>_*` config names in `docker-compose.yml` to match:
+
+```sh
+IMG=openidentityplatform/openam:<version>
+cid=$(docker create "$IMG") && docker cp "$cid:/usr/local/tomcat/webapps/openam.war" /tmp/ && docker rm "$cid"
+cd stacks/openam/schema
+for f in user_schema dashboard deviceprint kba oathdevices pushdevices; do
+  unzip -p /tmp/openam.war "WEB-INF/template/ldif/opendj/opendj_$f.ldif" > "opendj_$f.ldif"
+done
+echo <version> > VERSION && sha256sum *.ldif > SHA256SUMS
+```
+
+## One-shots must not inherit the image's healthcheck
+
+Both images declare a `HEALTHCHECK` for their server — OpenAM probes
+`localhost:8080/openam/isAlive.jsp`, OpenDJ its LDAP port. `dj-prep` and `post-install`
+run those images without starting the server, so the probe fails and Swarm **kills the
+task** as unhealthy: `task: non-zero exit (137): dockerexec: unhealthy container`,
+measured on the first 16.1.3 rebuild. It reads like an out-of-memory kill and is not
+one. Both one-shots set `healthcheck: disable: true`.
+
 ## Forcing a password change costs you the console login, and nothing says so
 
 Measured 2026-09-18, end to end. Three facts, in the order they bite.

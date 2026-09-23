@@ -11,8 +11,8 @@
 #         configurator runs to its LAST step and fails with a bare "error code :500";
 #         the real message is an unknown objectclass, in a debug log nobody reads.
 #
-# The LDIF files live in the OpenAM image, the LDAP tools live in this one, so
-# they arrive via the shared openam-ldif volume written by the ldif-export step.
+# The LDIF files live in the OpenAM image (inside its WAR), the LDAP tools live in
+# this one. They are vendored in ../schema/ and mounted here as Swarm configs.
 set -u
 : "${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}"
 : "${BASE_DN:=dc=openam,dc=example,dc=org}"
@@ -47,10 +47,17 @@ else
     -D "cn=Directory Manager" -j "$PW" -f /tmp/base.ldif
 fi
 
-# The LDIFs arrive from ldif-export, which may still be copying.
-i=0
-while [ ! -f /ldif/.export-done ] && [ "$i" -lt 60 ]; do i=$((i+1)); sleep 5; done
-[ -f /ldif/.export-done ] || { echo "FAILED: ldif-export never finished (no /ldif/.export-done)"; exit 1; }
+# The schema is vendored per OpenAM version and arrives as Swarm configs under
+# /schema. Loading one version's schema under another's OpenAM is the drift this
+# stops: fail loudly, with the fix, rather than half-work.
+: "${OPENAM_VERSION:?OPENAM_VERSION not set}"
+have=$(tr -d '[:space:]' < /schema/VERSION 2>/dev/null)
+if [ "$have" != "$OPENAM_VERSION" ]; then
+  echo "FAILED: vendored schema is for OpenAM '${have:-missing}', OPENAM_VERSION is '$OPENAM_VERSION'."
+  echo "        Re-extract stacks/openam/schema/ from the new image -- see ../README.md."
+  exit 1
+fi
+echo "ok: vendored schema matches OPENAM_VERSION ($have)"
 
 # ---- Trap 2: OpenAM's user schema
 # Applied every run: ldapmodify on an already-present schema element is a no-op
@@ -58,9 +65,9 @@ while [ ! -f /ldif/.export-done ] && [ "$i" -lt 60 ]; do i=$((i+1)); sleep 5; do
 # worth stopping for -- so these are reported individually rather than gated.
 for f in opendj_user_schema.ldif opendj_dashboard.ldif opendj_deviceprint.ldif \
          opendj_kba.ldif opendj_oathdevices.ldif opendj_pushdevices.ldif; do
-  if [ ! -f "/ldif/$f" ]; then echo "MISSING: /ldif/$f (did ldif-export run?)"; fail=1; continue; fi
+  if [ ! -f "/schema/$f" ]; then echo "MISSING: /schema/$f (config not mounted?)"; fail=1; continue; fi
   if /opt/opendj/bin/ldapmodify -h opendj -p 1389 -D "cn=Directory Manager" -j "$PW" \
-       -f "/ldif/$f" >/tmp/step.out 2>&1; then
+       -f "/schema/$f" >/tmp/step.out 2>&1; then
     echo "ok: schema $f"
   elif grep -qi 'already exists\|attribute type with name' /tmp/step.out; then
     echo "ok: schema $f (already present)"
