@@ -18,7 +18,7 @@ set -u
 : "${BASE_DN:=dc=openam,dc=example,dc=org}"
 DC=$(echo "$BASE_DN" | sed 's/^dc=//; s/,.*//')
 PW=$(mktemp); printf '%s' "$DIRECTORY_PASSWORD" > "$PW"; chmod 0400 "$PW"
-trap 'rm -f "$PW" /tmp/step.out /tmp/policy.ldif /tmp/base.ldif /tmp/ou.ldif' EXIT
+trap 'rm -f "$PW" /tmp/step.out /tmp/policy.ldif /tmp/base.ldif /tmp/userinit.ldif' EXIT
 
 fail=0
 step() {
@@ -47,24 +47,47 @@ else
     -D "cn=Directory Manager" -j "$PW" -f /tmp/base.ldif
 fi
 
-# ---- Trap 1b: the two containers the configurator writes into
-# Measured from the 09-18 directory backup: ou=people and ou=groups were created by
-# Directory Manager 28 seconds after the base entry and ~50 seconds BEFORE the
-# configurator's first entry -- by hand, recorded nowhere. Without ou=people the
-# configurator runs to its very last step, "Creating demo user", and fails with a
-# bare "error code :500"; only debug/IdRepo says "parent entry ou=people ... does
-# not exist". Found on the first fresh 16.1.3 rebuild, 2026-09-23.
-for ou in people groups; do
+# LDIF folds long lines: a line starting with ONE space continues the previous one
+# (RFC 2849), joined with no separator.
+unfold() { awk '/^ / && NR > 1 { buf = buf substr($0, 2); next }
+                NR > 1 { print buf }
+                { buf = $0 }
+                END { if (NR) print buf }'; }
+# ---- Trap 1b: ou=people, ou=groups, and the self-modification deny ACI
+# The configurator writes its demo user into ou=people and never creates it: without
+# it, it runs to "Creating demo user" and fails with a bare "error code :500" (only
+# debug/IdRepo says the parent entry does not exist). OpenAM ships the fix as
+# opendj_userinit.ldif -- both containers PLUS an ACI on the suffix denying users
+# write access to their own inetuserstatus, ds-pwp-account-disabled, memberof and
+# the rest. The 09-18 directory has all three. 803a7b1 hand-wrote the two OUs
+# instead and so dropped the ACI, which ../README.md (Trap 2) had warned against.
+# Now: the vendor's file, token substituted, and the END STATE checked -- -c lets a
+# re-run carry on past "already exists", so the exit status cannot be the test.
+UI=/schema/opendj_userinit.ldif
+if [ ! -f "$UI" ]; then
+  echo "MISSING: $UI (config not mounted?)"; fail=1
+else
+  sed "s/@userStoreRootSuffix@/$BASE_DN/g" "$UI" > /tmp/userinit.ldif
+  /opt/opendj/bin/ldapmodify -a -c -h opendj -p 1389 -D "cn=Directory Manager" -j "$PW" \
+    -f /tmp/userinit.ldif >/tmp/step.out 2>&1 || true
+  for ou in people groups; do
+    if /opt/opendj/bin/ldapsearch -h opendj -p 1389 -D "cn=Directory Manager" -j "$PW" \
+         -b "ou=$ou,$BASE_DN" -s base "(objectClass=*)" dn >/dev/null 2>&1; then
+      echo "ok: ou=$ou present"
+    else
+      echo "FAILED: ou=$ou absent after applying opendj_userinit.ldif"
+      sed 's/^/    /' /tmp/step.out | tail -8; fail=1
+    fi
+  done
   if /opt/opendj/bin/ldapsearch -h opendj -p 1389 -D "cn=Directory Manager" -j "$PW" \
-       -b "ou=$ou,$BASE_DN" -s base "(objectClass=*)" dn >/dev/null 2>&1; then
-    echo "skip: ou=$ou exists"
+       -b "$BASE_DN" -s base "(objectClass=*)" aci 2>/dev/null | unfold \
+       | grep -q 'OpenAM User self modification denied for these attributes'; then
+    echo "ok: self-modification deny ACI present on $BASE_DN"
   else
-    printf 'dn: ou=%s,%s\nobjectClass: top\nobjectClass: organizationalUnit\nou: %s\n' \
-      "$ou" "$BASE_DN" "$ou" > /tmp/ou.ldif
-    step "create ou=$ou" /opt/opendj/bin/ldapmodify -a -h opendj -p 1389 \
-      -D "cn=Directory Manager" -j "$PW" -f /tmp/ou.ldif
+    echo "FAILED: self-modification deny ACI missing on $BASE_DN"
+    sed 's/^/    /' /tmp/step.out | tail -8; fail=1
   fi
-done
+fi
 
 # The schema is vendored per OpenAM version and arrives as Swarm configs under
 # /schema. Loading one version's schema under another's OpenAM is the drift this
@@ -92,12 +115,6 @@ echo "ok: vendored schema matches OPENAM_VERSION ($have)"
 # CHANGED under an existing OID is not reconciled -- that needs the exact old value
 # deleted -- and is not something any OpenAM release so far has done.
 #
-# LDIF folds long lines: a line starting with ONE space continues the previous one
-# (RFC 2849), joined with no separator.
-unfold() { awk '/^ / && NR > 1 { buf = buf substr($0, 2); next }
-                NR > 1 { print buf }
-                { buf = $0 }
-                END { if (NR) print buf }'; }
 # "at:<oid>" / "oc:<oid>" for every definition line on stdin (already unfolded).
 oids() { awk '{ k = tolower(substr($0, 1, index($0, ":") - 1))
                 if (k == "attributetypes") t = "at"; else if (k == "objectclasses") t = "oc"; else next

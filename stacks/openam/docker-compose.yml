@@ -96,6 +96,7 @@ services:
       - {source: openam_schema_kba, target: /schema/opendj_kba.ldif, mode: 0444}
       - {source: openam_schema_oathdevices, target: /schema/opendj_oathdevices.ldif, mode: 0444}
       - {source: openam_schema_pushdevices, target: /schema/opendj_pushdevices.ldif, mode: 0444}
+      - {source: openam_schema_userinit, target: /schema/opendj_userinit.ldif, mode: 0444}
     environment:
       DIRECTORY_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
       BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
@@ -162,7 +163,7 @@ configs:
   # Swarm configs are IMMUTABLE. Bump the name when the script changes, or the
   # redeploy fails with a config-already-exists error that names nothing useful.
   opendj_prep_sh:
-    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_5}
+    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_6}
     file: ./scripts/opendj-prep.sh
   openam_post_install_sh:
     name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_9}
@@ -176,6 +177,7 @@ configs:
   openam_schema_kba:         {name: openam_schema_16_1_3_kba,         file: ./schema/opendj_kba.ldif}
   openam_schema_oathdevices: {name: openam_schema_16_1_3_oathdevices, file: ./schema/opendj_oathdevices.ldif}
   openam_schema_pushdevices: {name: openam_schema_16_1_3_pushdevices, file: ./schema/opendj_pushdevices.ldif}
+  openam_schema_userinit:    {name: openam_schema_16_1_3_userinit,    file: ./schema/opendj_userinit.ldif}
 
 volumes:
   openam-config:

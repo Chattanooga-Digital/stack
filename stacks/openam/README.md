@@ -69,7 +69,10 @@ the base entry and before the configurator's first write — by hand, like the b
 and recorded nowhere until the first fresh rebuild failed on it. That failure looks
 exactly like Trap 2 below (a bare `error code :500` at "Creating demo user"); the
 difference is only in `debug/IdRepo`: *"parent entry ou=people,… does not exist"*.
-`dj-prep` creates the base entry and both containers.
+`dj-prep` creates the base entry, then applies OpenAM's own `opendj_userinit.ldif`
+(vendored in `schema/`): both containers **and** the deny ACI described under Trap 2,
+which the 09-18 directory also carries. Hand-writing the two containers — as this stack
+briefly did (803a7b1) — builds a directory that works and silently lacks that ACI.
 
 ### Trap 2 — an external user store needs OpenAM's schema loaded into it
 
@@ -125,7 +128,8 @@ first, and treat a 409 as "not reset" rather than retrying past it.
 
 ## The schema is vendored, per OpenAM version, in `schema/`
 
-Trap 2 below needs OpenAM's six schema LDIFs loaded into OpenDJ **before** the
+Trap 2 below needs OpenAM's six schema LDIFs — and its `opendj_userinit.ldif`, which is
+not schema but ships beside them — loaded into OpenDJ **before** the
 configurator runs. They ship only inside the WAR, under
 `WEB-INF/template/ldif/opendj/`, and they are vendored here byte-identical — extracted
 from the WAR of the image actually deployed,
@@ -236,8 +240,9 @@ somebody has to remember.
 
 ## Accounts: invite links, not passwords we choose
 
-Only ONE credential for this stack is ours to hold: the bootstrap admin in
-`ADMIN_PASSWORD`, which exists to configure the system and nothing else. Real people
+The only credentials for this stack that are ours to hold are the administrator's
+(`OPENAM_ADMIN_PASSWORD`) and the service account it configures, which exist to run
+the system and nothing else. Real people
 are added by creating the account and letting the system send them a set-password
 link. We never learn their password, so there is nothing for us to store, leak, or be
 asked to rotate.
@@ -336,33 +341,44 @@ deletes it. The line above originally said "five entries" and missed it.
 **Directory password policy** — `ds-cfg-force-change-on-reset: true`, with
 `ds-cfg-password-history-count: 0` and `ds-cfg-password-history-duration: 0 seconds`.
 
-## 🔴 Nobody can administer this instance, and the way back has a cost
+## Administering it, and rebuilding it
 
-`amadmin`'s password was set by hand when the instance was configured on 2026-09-18
-and was never written into the stack environment or any secret store. The stack
-environment carries only `DIRECTORY_PASSWORD`, which is OpenDJ's Directory Manager
-and is **not** `amadmin`. REST authentication for `amadmin` also needs
-`?authIndexType=service&authIndexValue=ldapService`; the plain endpoint answers
-*"Authentication Module Denied"*, which reads like a bad password and is a wrong
-chain. **Do not guess at it — OpenAM has account lockout.**
+**`amadmin`'s password is `OPENAM_ADMIN_PASSWORD` in the stack environment**, and the
+`amldapuser` service account's is `OPENAM_AMLDAPUSER_PASSWORD` — two values, so one
+leak is not two. Neither is OpenDJ's Directory Manager (`DIRECTORY_PASSWORD`). REST
+authentication for `amadmin` needs `?authIndexType=service&authIndexValue=ldapService`;
+the plain endpoint answers *"Authentication Module Denied"*, which reads like a bad
+password and is a wrong chain. **Do not guess at it — OpenAM has account lockout.**
 
-Two ways back, and they are not equivalent:
+**How it got here.** On 2026-09-18 the password was typed into the configurator by
+hand and recorded nowhere, so nobody could administer the instance. Resetting it over
+LDAP was rejected (a direct write to an identity product's own credential store, and
+no more reproducible afterwards). Instead the stack was **rebuilt from empty volumes on
+2026-09-23, on 16.1.3**, with every hand step from 09-18 moved into `dj-prep` and
+`post-install`. OpenAM is a live candidate; one we cannot rebuild from source is not
+one we could responsibly run, so making the rebuild work was part of evaluating it.
 
-1. **Reset `amadmin` in the config store over LDAP.** Fast, keeps every account and
-   all of the configuration above. But it is a direct write to an identity
-   product's own credential store, which is the class of change this project has
-   agreed not to make on supported systems, and it leaves the build no more
-   reproducible than it is today.
-2. **Rebuild with the credential in the environment.** Destroys the config store,
-   the five accounts and everything in the section above, and requires the
-   post-install script that does not yet exist. It ends with an instance that can be
-   rebuilt again.
+The first from-zero runs found these, each now handled in the scripts:
 
-**Recommended: (2), and the reason is the evaluation rather than the tidying.**
-OpenAM is a live candidate, which means we might run it. A candidate we cannot
-rebuild from source is not one we can responsibly operate, so making the rebuild
-work is *part of evaluating it* rather than a chore beside it. The section above
-exists so that rebuild is faithful.
+| Found | Where it is handled |
+|---|---|
+| Swarm killed both one-shots, exit 137, "unhealthy container" (the images' own healthchecks) | `healthcheck: disable` on both |
+| `dsconfig` needs a local installation (`config/buildinfo`) the one-shot does not have | `dj-prep` uses `ldapmodify` on `cn=config`, reads it back |
+| Re-sending a schema file always fails once it is loaded (`20 Attribute or Value Exists`) | `dj-prep` reconciles per definition, by OID |
+| `ou=people` / `ou=groups` never created by the configurator (bare 500 at "Creating demo user") | `dj-prep` applies `opendj_userinit.ldif`: both, plus the self-modification deny ACI |
+| An unconfigured OpenAM answers `isAlive.jsp` with a **302** to its setup page, never 200 | `post-install` accepts either state |
+| OpenAM will not create a user with no password ("Minimum password length is 8.") | 32 random characters nobody is told, via `ssoadm -D` |
+| `ssoadm show-identity` does not exist, so every account read as absent | `identity_state`: `list-identities`, three answers |
+| The configurator's `demo` account, Active, password `changeit` — it logged in | `post-install` deletes it |
+
+**To rebuild again:** scale the stack's services to zero; remove the *exited* task
+containers (they pin the volumes, and `DELETE /volumes` answers 409 otherwise); delete
+`openam-config`, `openam-home` and `openam-ldif`; redeploy. `dj-prep` then
+`post-install` do the rest — read `post-install`'s log, it ends
+`post-install complete.` or names what failed. A redeploy onto existing volumes is
+safe: every phase checks before it acts, and a re-run was proven to exit 0 with
+everything skipped or re-applied. The accounts come back **without anyone being
+mailed** — sending people their set-password links is a separate, deliberate step.
 
 **The admin tools ship in the image. The trap is a reused volume, not a missing
 download.** Upstream's Dockerfile — 15.0.3 and 16.1.3 alike, lines 27–30 of
@@ -387,9 +403,5 @@ and were committed in d939429. The search behind them excluded `/usr/openam` —
 path the volume masks. The live volume's tools came from the 15.0.3 image on first
 mount. OpenAM, like the other three, ships as one image with its own tooling.
 
-A rebuild needs, in order: `OPENAM_ADMIN_PASSWORD` added to the stack environment
-and both `.env.example` files; the configurator run from that variable; the five
-accounts created; the chain and realm settings above applied with `ssoadm`; the
-self-service and mail settings applied; `ds-cfg-force-change-on-reset` set on
-OpenDJ. Note that `ssoadm`'s password file must be mode **400**, not 600.
+Note that `ssoadm`'s password file must be mode **400**, not 600.
 
