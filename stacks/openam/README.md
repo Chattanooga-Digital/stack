@@ -185,3 +185,92 @@ this one takes no SMTP environment variables — it is set in the admin console 
 first boot. That is a manual step, and until it is done every invitation and every
 password reset **fails silently**. Gancio sat in exactly that state from 4 September
 with nobody noticing, so check it deliberately rather than assuming.
+
+## The live instance's actual configuration, measured 2026-09-23
+
+Everything below was read out of the OpenDJ config store, not remembered. It is the
+set of things a fresh deploy does **not** get, and therefore exactly what a
+post-install script has to reproduce. Password values are held in the store and are
+deliberately not recorded here; the stack environment is where they belong.
+
+**Realm authentication** — `ou=default,ou=OrganizationConfig,ou=1.0,ou=iPlanetAMAuthService,ou=services,<basedn>`
+
+```
+iplanet-am-auth-org-config        = userLdapService
+iplanet-am-auth-admin-auth-module = ldapService
+iplanet-am-auth-alias-attr-name   = uid
+```
+
+**The chain itself** — `ou=userLdapService,ou=Configurations,ou=default,ou=OrganizationConfig,ou=1.0,ou=iPlanetAMAuthConfiguration,ou=services,<basedn>`
+
+```
+iplanet-am-auth-configuration = <AttributeValuePair><Value>LDAP REQUIRED </Value></AttributeValuePair>
+```
+
+Three chains exist: `ldapService` (stock, and what `amadmin` uses), `amsterService`
+(stock), and `userLdapService` (ours).
+
+**Self-service password reset** — `ou=default,ou=OrganizationConfig,ou=1.0,ou=selfService,ou=services,<basedn>`
+
+```
+selfServiceForgottenPasswordEnabled                 = true
+selfServiceForgottenPasswordEmailVerificationEnabled = true
+selfServiceForgottenPasswordKbaEnabled              = false
+selfServiceForgottenPasswordCaptchaEnabled          = false
+selfServiceForgottenPasswordTokenTTL                = 86400
+selfServiceEncryptionKeyPairAlias                   = selfserviceenctest
+selfServiceSigningSecretKeyAlias                    = selfservicesigntest
+```
+
+**Mail** — `ou=default,ou=OrganizationConfig,ou=1.0,ou=MailServer,ou=services,<basedn>`
+
+```
+forgerockEmailServiceSMTPHostName    = smtp.resend.com
+forgerockEmailServiceSMTPHostPort    = 465          <- SSL, not STARTTLS; see above
+forgerockEmailServiceSMTPSSLEnabled  = SSL
+forgerockEmailServiceSMTPUserName    = resend
+forgerockEmailServiceSMTPFromAddress = no-reply@get.chattanooga.digital
+forgerockEmailServiceSMTPSubject     = Set your password
+```
+
+**Accounts** — five entries under `ou=people,<basedn>`: `glaudeman`, `azahorscak`,
+`turtlewolfe`, `raitchison`, `wroush`, all `inetUserStatus: Active`, no group
+membership and no delegation privilege. `ou=groups` exists and is empty.
+
+**Directory password policy** — `ds-cfg-force-change-on-reset: true`, with
+`ds-cfg-password-history-count: 0` and `ds-cfg-password-history-duration: 0 seconds`.
+
+## 🔴 Nobody can administer this instance, and the way back has a cost
+
+`amadmin`'s password was set by hand when the instance was configured on 2026-09-18
+and was never written into the stack environment or any secret store. The stack
+environment carries only `DIRECTORY_PASSWORD`, which is OpenDJ's Directory Manager
+and is **not** `amadmin`. REST authentication for `amadmin` also needs
+`?authIndexType=service&authIndexValue=ldapService`; the plain endpoint answers
+*"Authentication Module Denied"*, which reads like a bad password and is a wrong
+chain. **Do not guess at it — OpenAM has account lockout.**
+
+Two ways back, and they are not equivalent:
+
+1. **Reset `amadmin` in the config store over LDAP.** Fast, keeps every account and
+   all of the configuration above. But it is a direct write to an identity
+   product's own credential store, which is the class of change this project has
+   agreed not to make on supported systems, and it leaves the build no more
+   reproducible than it is today.
+2. **Rebuild with the credential in the environment.** Destroys the config store,
+   the five accounts and everything in the section above, and requires the
+   post-install script that does not yet exist. It ends with an instance that can be
+   rebuilt again.
+
+**Recommended: (2), and the reason is the evaluation rather than the tidying.**
+OpenAM is a live candidate, which means we might run it. A candidate we cannot
+rebuild from source is not one we can responsibly operate, so making the rebuild
+work is *part of evaluating it* rather than a chore beside it. The section above
+exists so that rebuild is faithful.
+
+A rebuild needs, in order: `OPENAM_ADMIN_PASSWORD` added to the stack environment
+and both `.env.example` files; the configurator run from that variable; the five
+accounts created; the chain and realm settings above applied with `ssoadm`; the
+self-service and mail settings applied; `ds-cfg-force-change-on-reset` set on
+OpenDJ. Note that `ssoadm`'s password file must be mode **400**, not 600.
+
