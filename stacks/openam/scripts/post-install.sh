@@ -223,6 +223,22 @@ step "mail server" adm set-attr-defs -s MailServer -t organization \
      forgerockEmailServiceSMTPSubject="Set your password"
 fi
 
+# exists | absent | error -- for one User identity. Three answers, not two: a check
+# that FAILED must never read as "absent". Until 2026-09-23 this used
+# `ssoadm show-identity`, which does not exist ("Unknown sub command", rc 12), so
+# every account read as absent: creates were re-attempted on every deploy, and the
+# demo account below was reported "skip: no demo account" while demo/changeit still
+# logged in. get-identity is no better as a test: its "not found" is rc 127, which
+# is also its code for every other failure. list-identities answers rc 0 either way
+# and says which in its output, measured against the live instance:
+#   present -> "<uid> (id=<uid>,ou=user,<basedn>)"      absent -> "There were no entries."
+identity_state() {
+  _out=$(adm list-identities -e / -x "$1" -t User 2>&1) || { echo error; return 0; }
+  if printf '%s\n' "$_out" | grep -q "^$1 (id=$1,"; then echo exists
+  elif printf '%s\n' "$_out" | grep -q 'There were no entries'; then echo absent
+  else echo error; fi
+}
+
 # ------------------------------------------------------------- 6. the accounts
 # People set their own password from the mail the system sends; we never learn it,
 # so there is nothing to store or leak. OpenAM will not create a user with NO
@@ -259,8 +275,11 @@ EOF
     echo "FAILED: OPENAM_USERS record $n is not uid,mail,Given,Surname -- not created"
     fail=1; continue
   fi
-  if adm show-identity -e / -i "$u" -t User >/dev/null 2>&1; then
+  st=$(identity_state "$u")
+  if [ "$st" = exists ]; then
     echo "skip: $u exists"
+  elif [ "$st" != absent ]; then
+    echo "FAILED: $u -- could not tell whether it exists, so not creating it"; fail=1
   else
     DATA=$(mktemp)      # 0600 already; written before anything restricts it
     rnd=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
@@ -272,6 +291,7 @@ EOF
     rnd=''
     step "create $u" adm create-identity -e / -i "$u" -t User -D "$DATA"
     rm -f "$DATA"
+    [ "$(identity_state "$u")" = exists ] || { echo "FAILED: $u does not read back after create"; fail=1; }
   fi
 done
 IFS=$_ifs; set +f
@@ -282,11 +302,13 @@ IFS=$_ifs; set +f
 # changeit returned a session from the public URL. The 09-18 instance had the same
 # account, its password unchanged since creation. Nobody uses it; it is a known
 # credential on an internet-facing identity provider. Delete it.
-if adm show-identity -e / -i demo -t User >/dev/null 2>&1; then
-  step "delete the configurator's demo account" adm delete-identities -e / -i demo -t User
-else
-  echo "skip: no demo account"
-fi
+case "$(identity_state demo)" in
+  absent) echo "skip: no demo account" ;;
+  exists)
+    step "delete the configurator's demo account" adm delete-identities -e / -i demo -t User
+    [ "$(identity_state demo)" = absent ] || { echo "FAILED: demo still present after delete"; fail=1; } ;;
+  *) echo "FAILED: could not tell whether the demo account exists"; fail=1 ;;
+esac
 
 # Note: force-change-on-reset lives in opendj-prep.sh, because dsconfig ships in
 # the OpenDJ image and not this one.
