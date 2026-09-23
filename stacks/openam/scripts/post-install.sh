@@ -50,6 +50,13 @@ step() {
 
 CFG=/usr/openam/ssoconfiguratortools
 ADM=/usr/openam/ssoadmintools
+# OpenAM's own config dir -- the image's OPENAM_DATA_DIR, and what CATALINA_OPTS
+# points the server at. NOT /usr/openam. Every value below was checked against the
+# configurator's own record of the 2026-09-18 run (config/install.log in the backup).
+AMCONFIG=/usr/openam/config
+_host=${OPENAM_URL#https://}; _host=${_host#http://}; _host=${_host%%/*}
+SERVER_URL="https://$_host"                       # origin only; DEPLOYMENT_URI adds /openam
+COOKIE_DOMAIN="${OPENAM_COOKIE_DOMAIN:-.${_host#*.}}"   # 09-18: .staging.chattanooga.digital
 
 # THE TOOLS COME FROM THE IMAGE, THROUGH THE VOLUME. Upstream's Dockerfile bakes
 # SSOConfiguratorTools and SSOAdminTools into /usr/openam; openam-home mounts over
@@ -104,14 +111,15 @@ echo "ok: OpenAM is responding"
 
 # ------------------------------------------------------- 2. configure if needed
 # A configured instance answers isAlive.jsp AND has a bootstrap file.
-if [ -f /usr/openam/config/boot.json ]; then
+if [ -f "$AMCONFIG/boot.json" ]; then
   echo "skip: already configured (boot.json present)"
 else
   PROPS=$(mktemp); chmod 0400 "$PROPS"
   cat > "$PROPS" <<EOF
-SERVER_URL=$OPENAM_URL
+SERVER_URL=$SERVER_URL
 DEPLOYMENT_URI=/openam
-BASE_DIR=/usr/openam
+BASE_DIR=$AMCONFIG
+COOKIE_DOMAIN=$COOKIE_DOMAIN
 locale=en_US
 PLATFORM_LOCALE=en_US
 AM_ENC_KEY=
@@ -122,6 +130,8 @@ DATA_STORE=dirServer
 DIRECTORY_SSL=SIMPLE
 DIRECTORY_SERVER=$DIRECTORY_SERVER
 DIRECTORY_PORT=$DIRECTORY_PORT
+DIRECTORY_ADMIN_PORT=4444
+DIRECTORY_JMX_PORT=1689
 ROOT_SUFFIX=$BASE_DN
 DS_DIRMGRDN=cn=Directory Manager
 DS_DIRMGRPASSWD=$DIRECTORY_PASSWORD
@@ -134,7 +144,9 @@ fi
 if [ -x "$ADM/openam/bin/ssoadm" ]; then
   echo "skip: ssoadm already set up"
 else
-  step "ssoadm setup" sh -c "cd $ADM && ./setup --acceptLicense --path $ADM/openam --debug $ADM/debug --log $ADM/log"
+  # --path is path.AMConfig: the SERVER's config dir, read out of setup itself. The
+  # tools then install under $ADM/<deployment-uri>/, hence $ADM/openam/bin/ssoadm.
+  step "ssoadm setup" sh -c "cd $ADM && ./setup --acceptLicense --path $AMCONFIG --debug /usr/openam/ssoadm-debug --log /usr/openam/ssoadm-log"
 fi
 SSOADM="$ADM/openam/bin/ssoadm"
 [ -x "$SSOADM" ] || { echo "FAILED: ssoadm missing after setup"; exit 1; }
