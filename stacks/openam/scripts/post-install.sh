@@ -276,6 +276,18 @@ EOF
 done
 IFS=$_ifs; set +f
 
+# ---------------------------------------------- 7. the configurator's demo account
+# The configurator always creates uid=demo, Active, with OpenAM's DOCUMENTED default
+# password "changeit". Measured 2026-09-23 on the fresh 16.1.3 instance: demo /
+# changeit returned a session from the public URL. The 09-18 instance had the same
+# account, its password unchanged since creation. Nobody uses it; it is a known
+# credential on an internet-facing identity provider. Delete it.
+if adm show-identity -e / -i demo -t User >/dev/null 2>&1; then
+  step "delete the configurator's demo account" adm delete-identities -e / -i demo -t User
+else
+  echo "skip: no demo account"
+fi
+
 # Note: force-change-on-reset lives in opendj-prep.sh, because dsconfig ships in
 # the OpenDJ image and not this one.
 

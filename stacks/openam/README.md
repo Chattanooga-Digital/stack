@@ -307,6 +307,12 @@ forgerockEmailServiceSMTPSubject     = Set your password
 and status, and the post-install written from it created accounts with no address to
 send a reset link to. Re-measured from the directory backup the same day.)*
 
+**And a sixth: `demo`.** The configurator always creates `uid=demo`, Active, with
+OpenAM's documented default password `changeit`. On the 09-18 instance it was still
+Active with that password unchanged since creation, and on 2026-09-23 `demo` /
+`changeit` returned a session from the public URL of the fresh rebuild. `post-install`
+deletes it. The line above originally said "five entries" and missed it.
+
 **Directory password policy** — `ds-cfg-force-change-on-reset: true`, with
 `ds-cfg-password-history-count: 0` and `ds-cfg-password-history-duration: 0 seconds`.
 
