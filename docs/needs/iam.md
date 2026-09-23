@@ -81,10 +81,31 @@ set-password mail from each system at a real mailbox on 2026-09-19. Keycloak
 offers *Forgot Your Password*, Zitadel *Reset Password*, OpenAM advertises
 `forgotPassword: true`, Authentik exposes its recovery flow on the login page.
 
-**Rob Aitchison walked the whole reset flow on all four, 2026-09-21**, which is the
-first evaluation anyone has done by using the systems rather than reading about
-them. His notes are scoped to password reset and deliberately carry no ranking.
-Quoted rather than summarised, because the wording is the finding:
+**Two people have now driven these systems rather than read about them.**
+William Roush reported four findings in the IAM Evaluation Talk room on
+**2026-09-19**, which is the earliest evaluation anyone did; Rob Aitchison walked
+the whole reset flow on all four on **2026-09-21**. Both are quoted rather than
+summarised, because the wording is the finding, and both are scoped narrowly and
+carry no ranking.
+
+*(This page previously called Rob's the first. That was wrong, and wrong in a way
+worth naming: William's messages sat in a Talk room nobody re-reads, which is the
+same reason his report of the admin gap went unactioned for three days.)*
+
+| | William, 2026-09-19 |
+|---|---|
+| Authentik | *"Authentik's email renders with a giant logo lol"* |
+| OpenAM | *"OpenAM sent a broken e-mail that... frankly isn't acceptable, makes me reset my password, then makes me change it right after resetting it... that's... awful"* |
+| Zitadel | *"Zitadel doesn't even have a password reset page for me to use"* |
+| Authentik + OpenAM | *"I don't appear to be an admin on Authentik or OpenAM"* |
+
+🔴 **William's Zitadel line contradicts a ticked box on this page**, and the
+contradiction is unresolved. Self-service password reset is ticked for Zitadel
+`JP 2026-09-19` `RA 2026-09-21`; William, on 2026-09-19, could not find a reset
+page at all. Rob succeeded on the 21st once he used his email address as the login
+name. Whether William hit the login-name defect, a genuinely absent page, or
+something else has not been established — and until it is, that tick is contested
+by the person who owns the infrastructure. **Do not average the two; settle it.**
 
 | | Rob, 2026-09-21 |
 |---|---|
@@ -95,7 +116,9 @@ Quoted rather than summarised, because the wording is the finding:
 
 Only Keycloak leaves the person unsure whether the reset worked, which matters more
 for the co-op's stated goal of a low skill threshold than any feature in the table
-above. Only Zitadel confirms the change by mail.
+above. Only Zitadel confirms the change by mail. Both of them independently
+disliked OpenAM's reset loop, which is the one point the two sets of notes agree
+on without having seen each other.
 
 🔴 **Two of these are ours, not the products', and must not be scored against the
 candidate.**

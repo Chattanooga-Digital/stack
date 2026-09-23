@@ -22,8 +22,15 @@ It exists because of a measurement taken on 2026-09-22. William's Deck card #103
 asked for admin accounts for Greg, Adam, Jon, Rob and Will on all four
 candidates. Five accounts did exist on all four. **Admin existed on one.** The
 accounts were created and the privilege was never granted, and nothing in the
-process would have said so — an ordinary account and an administrator's account
+handover would have said so — an ordinary account and an administrator's account
 are indistinguishable from the invitation mail.
+
+🔴 **The measurement was three days late.** William reported it himself in the IAM
+Evaluation Talk room on 2026-09-19 — *"I don't appear to be an admin on Authentik
+or OpenAM"* — and Greg asked for the roles two hours later. Both went unactioned
+until the 22nd, when four database queries re-derived what one sentence had
+already said. Talk is where this team reacts in the moment and is not where anyone
+looks three days later; that is an argument for the collective, not against Talk.
 
 | | admin, before | admin, now |
 |---|---|---|
