@@ -224,8 +224,14 @@ step "mail server" adm set-attr-defs -s MailServer -t organization \
 fi
 
 # ------------------------------------------------------------- 6. the accounts
-# Created without a password on purpose: people set their own from the mail the
-# system sends. We never learn it, so there is nothing to store or leak.
+# People set their own password from the mail the system sends; we never learn it,
+# so there is nothing to store or leak. OpenAM will not create a user with NO
+# password ("Minimum password length is 8.", measured on the first fresh 16.1.3
+# run), so each account gets 32 random characters generated here, written with the
+# other attributes to an owner-only file for ssoadm -D -- never in argv, never
+# printed -- and deleted at once. Nobody is told it; nobody could be. And because
+# the directory has force-change-on-reset, an administrator-set password is marked
+# must-change anyway.
 #
 # ONE RECORD PER PERSON, separated by ';', fields by ',':  uid,mail,Given,Surname
 # The mail is not decoration: self-service reset sends to the account's `mail`
@@ -256,8 +262,16 @@ EOF
   if adm show-identity -e / -i "$u" -t User >/dev/null 2>&1; then
     echo "skip: $u exists"
   else
-    step "create $u" adm create-identity -e / -i "$u" -t User \
-      -a inetuserstatus=Active "mail=$mail" "givenName=$given" "sn=$sn" "cn=$given $sn"
+    DATA=$(mktemp)      # 0600 already; written before anything restricts it
+    rnd=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
+    if [ "${#rnd}" -lt 32 ]; then
+      echo "FAILED: create $u -- could not generate a random password"; fail=1; rm -f "$DATA"; continue
+    fi
+    printf 'inetuserstatus=Active\nmail=%s\ngivenName=%s\nsn=%s\ncn=%s %s\nuserpassword=%s\n' \
+      "$mail" "$given" "$sn" "$given" "$sn" "$rnd" > "$DATA"
+    rnd=''
+    step "create $u" adm create-identity -e / -i "$u" -t User -D "$DATA"
+    rm -f "$DATA"
   fi
 done
 IFS=$_ifs; set +f

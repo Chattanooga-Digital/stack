@@ -165,7 +165,7 @@ configs:
     name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_5}
     file: ./scripts/opendj-prep.sh
   openam_post_install_sh:
-    name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_4}
+    name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_5}
     file: ./scripts/post-install.sh
   # Content is bound to the OpenAM version, so the version is in the name: an
   # upgrade brings new files AND new config names, never a clash with the old.
