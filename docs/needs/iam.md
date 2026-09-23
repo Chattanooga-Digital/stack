@@ -125,12 +125,33 @@ policy is uniform. What differs is what each one does when the user then complet
 | **Keycloak** | **Yes.** `requiredActions` is `[]` for `raitchison` and `wroush`, the two who completed it, and still `['UPDATE_PASSWORD']` for the three who have not |
 | **Zitadel** | **Yes.** Walked end to end 2026-09-23 — reset, set password, signed straight in, no second prompt |
 | **OpenAM** | **No.** `ds-cfg-force-change-on-reset: true` makes a self-service reset count as an *administrative* one, so the chain demands a second change immediately |
-| **Authentik** | **Unmeasured.** Rob's *"had to login twice after reset"* may be this same behaviour, and is one test away |
+| **Authentik** | **No — and this one IS ours.** Measured 2026-09-23 |
 
 So William's *"makes me reset my password, then makes me change it right after
 resetting it... that's... awful"* is a fair hit on the product. Removing the flag,
 which this page previously recommended, would have hidden a real difference between
 candidates rather than corrected a mistake of ours.
+
+**Why OpenAM's is the product's and Authentik's is not.** OpenAM sets a password
+during self-service by binding to the directory **as the administrator**, so a
+standard directory policy correctly sees an administrative reset and flags the
+account. Keycloak and Zitadel own their credential store and can tell the two apart.
+That difference is architectural and belongs in the scoring.
+
+Authentik has no per-user flag at all, so our blueprint substitutes the user
+attribute `reset_password`. The recovery flow sets the password and **does not touch
+the attribute**, so the next login still prompts — which is precisely Rob's *"had to
+login twice after reset"*. Measured on the live accounts: `raitchison` and `wroush`,
+the two who logged in after resetting, now read `reset_password: false`; the three
+who have not logged in still read `true`. The flag is cleared by the **login**, not
+by the reset. **That is our defect and it is fixable** — the recovery flow needs to
+clear the attribute the way the login flow does.
+
+🔴 **And the same query shows who is actually evaluating.** On Authentik, only
+`raitchison` and `wroush` have ever logged in; `glaudeman` and `azahorscak` have no
+`last_login` at all. Keycloak agrees — `requiredActions` is empty only for those same
+two. **Two of the five evaluators have used these systems.** No amount of rebuilding
+fixes that, and it is the more important number on this page.
 
 Rob's aside — *"how would it know?"* — still has its answer, and it is not password
 history: `ds-cfg-password-history-count: 0` and `ds-cfg-password-history-duration: 0
