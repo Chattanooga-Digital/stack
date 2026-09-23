@@ -1,0 +1,185 @@
+services:
+  # OpenAM keeps its configuration in an LDAP directory rather than a SQL
+  # database. OpenDJ is the platform's own, and the pairing is what upstream
+  # documents; the embedded alternative puts config inside the app container,
+  # which does not survive a redeploy.
+  # This image advertises BASE_DN as a naming context without ever creating
+  # the base entry, and it carries none of OpenAM's user schema. Both have to
+  # be loaded before the configurator will complete - see the README.
+  opendj:
+    image: openidentityplatform/opendj:${OPENDJ_VERSION:-5.1.2}
+    environment:
+      BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
+      ROOT_USER_DN: ${DIRECTORY_USER_DN:-cn=Directory Manager}
+      ROOT_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
+    volumes:
+      - openam-config:/opt/opendj/data
+    networks:
+      - openam_internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        order: stop-first
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_OPENDJ:-512M}
+
+  openam:
+    image: openidentityplatform/openam:${OPENAM_VERSION:?OPENAM_VERSION not set}
+    environment:
+      # OpenAM is served from a Tomcat context path, NOT the domain root, so
+      # the console lives at https://<domain>/openam and a bare root request
+      # returns a Tomcat 404. The path comes from the image's OPENAM_PATH
+      # (default "openam"); it is NOT /auth, which is Keycloak's.
+      CATALINA_OPTS: -Xms${JVM_HEAP_MIN:-512m} -Xmx${JVM_HEAP_MAX:-1g}
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - openam-home:/usr/openam
+    networks:
+      - traefik_net
+      - openam_internal
+    depends_on:
+      - opendj
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN:?DOMAIN not set}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=8080"
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_OPENAM:-1500M}
+
+  # ---------------------------------------------------------------- one-shots
+  # Everything below replaces work that was done by hand on 2026-09-18 and
+  # therefore did not survive into the repository. A fresh deploy without these
+  # comes up with the stock DataStore chain, no self-service, no mail and no
+  # accounts - a different system from the one being evaluated.
+
+  # OpenAM's schema LDIFs are vendored in ./schema/, extracted byte-identical from
+  # the WAR in the deployed image (see ../README.md for how, and why not at deploy
+  # time: neither image carries unzip, jar or python, and a volume over Tomcat's
+  # webapps would keep serving an old WAR after an upgrade). dj-prep refuses to
+  # run if schema/VERSION differs from OPENAM_VERSION.
+  #
+  # Runs as root: it writes its completion marker onto a fresh, root-owned volume.
+  # healthcheck disabled: both images declare a HEALTHCHECK for a server this
+  # one-shot never starts, and Swarm KILLED the first run as "unhealthy" (exit 137).
+  dj-prep:
+    image: openidentityplatform/opendj:${OPENDJ_VERSION:-5.1.2}
+    user: "0"
+    entrypoint: ["/bin/sh", "/opendj-prep.sh"]
+    healthcheck:
+      disable: true
+    configs:
+      - source: opendj_prep_sh
+        target: /opendj-prep.sh
+        mode: 0555
+      - {source: openam_schema_version, target: /schema/VERSION, mode: 0444}
+      - {source: openam_schema_user, target: /schema/opendj_user_schema.ldif, mode: 0444}
+      - {source: openam_schema_dashboard, target: /schema/opendj_dashboard.ldif, mode: 0444}
+      - {source: openam_schema_deviceprint, target: /schema/opendj_deviceprint.ldif, mode: 0444}
+      - {source: openam_schema_kba, target: /schema/opendj_kba.ldif, mode: 0444}
+      - {source: openam_schema_oathdevices, target: /schema/opendj_oathdevices.ldif, mode: 0444}
+      - {source: openam_schema_pushdevices, target: /schema/opendj_pushdevices.ldif, mode: 0444}
+      - {source: openam_schema_userinit, target: /schema/opendj_userinit.ldif, mode: 0444}
+    environment:
+      DIRECTORY_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
+      BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
+      OPENAM_VERSION: ${OPENAM_VERSION:?OPENAM_VERSION not set}
+    volumes:
+      - openam-ldif:/ldif
+    networks:
+      - openam_internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: none
+
+  post-install:
+    image: openidentityplatform/openam:${OPENAM_VERSION:?OPENAM_VERSION not set}
+    entrypoint: ["/bin/sh", "/post-install.sh"]
+    healthcheck:
+      disable: true    # the image's check probes a Tomcat this one-shot never starts
+    configs:
+      - source: openam_post_install_sh
+        target: /post-install.sh
+        mode: 0555
+    environment:
+      OPENAM_URL: https://${DOMAIN:?DOMAIN not set}/openam
+      OPENAM_VERSION: ${OPENAM_VERSION:?OPENAM_VERSION not set}
+      OPENAM_ADMIN_PASSWORD: ${OPENAM_ADMIN_PASSWORD:?OPENAM_ADMIN_PASSWORD not set}
+      OPENAM_AMLDAPUSER_PASSWORD: ${OPENAM_AMLDAPUSER_PASSWORD:?OPENAM_AMLDAPUSER_PASSWORD not set}
+      DIRECTORY_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
+      BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
+      DIRECTORY_SERVER: opendj
+      DIRECTORY_PORT: "1389"
+      OPENAM_USERS: ${OPENAM_USERS:-}
+      SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-resend}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@get.chattanooga.digital}
+    volumes:
+      - openam-home:/usr/openam
+      - openam-ldif:/ldif:ro   # only to see dj-prep's .prep-done marker
+    networks:
+      - openam_internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: none
+
+networks:
+  traefik_net:
+    external: true
+  # Owned by this stack rather than expected from the cluster. The shared
+  # network exists on production but NOT on staging, so declaring it external
+  # means the stack cannot start there - and staging is where this gets
+  # evaluated. Every other stack on both clusters owns its own the same way.
+  openam_internal: {}
+
+configs:
+  # Swarm configs are IMMUTABLE. Bump the name when the script changes, or the
+  # redeploy fails with a config-already-exists error that names nothing useful.
+  opendj_prep_sh:
+    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_6}
+    file: ./scripts/opendj-prep.sh
+  openam_post_install_sh:
+    name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_9}
+    file: ./scripts/post-install.sh
+  # Content is bound to the OpenAM version, so the version is in the name: an
+  # upgrade brings new files AND new config names, never a clash with the old.
+  openam_schema_version:     {name: openam_schema_16_1_3_version,     file: ./schema/VERSION}
+  openam_schema_user:        {name: openam_schema_16_1_3_user,        file: ./schema/opendj_user_schema.ldif}
+  openam_schema_dashboard:   {name: openam_schema_16_1_3_dashboard,   file: ./schema/opendj_dashboard.ldif}
+  openam_schema_deviceprint: {name: openam_schema_16_1_3_deviceprint, file: ./schema/opendj_deviceprint.ldif}
+  openam_schema_kba:         {name: openam_schema_16_1_3_kba,         file: ./schema/opendj_kba.ldif}
+  openam_schema_oathdevices: {name: openam_schema_16_1_3_oathdevices, file: ./schema/opendj_oathdevices.ldif}
+  openam_schema_pushdevices: {name: openam_schema_16_1_3_pushdevices, file: ./schema/opendj_pushdevices.ldif}
+  openam_schema_userinit:    {name: openam_schema_16_1_3_userinit,    file: ./schema/opendj_userinit.ldif}
+
+volumes:
+  openam-config:
+  openam-home:
+  openam-ldif:
