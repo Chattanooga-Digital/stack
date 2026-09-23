@@ -150,12 +150,29 @@ The inconsistency stays for the duration and is recorded here instead: email
 address on Zitadel, short name on the other three.
 
 🔴 **And the general rule it comes from: no evaluation system changes underneath
-the evaluators without 24 hours' notice in the IAM Evaluation Talk room.** That
-covers the OpenAM rebuild above, which destroys the five accounts and the realm
-chain. People are mid-evaluation; a system that changes without warning wastes
-their work and the trust that got them to do it. The notice period is also when
-anyone holding un-written-down OpenAM findings should write them into the
-Operations collective, and anyone part-way through can say so and hold it.
+the evaluators without telling them first**, in the Talk room they actually use.
+People are mid-evaluation; a system that changes without warning wastes their work
+and the trust that got them to do it, and their attention is the scarce resource
+here, not the server.
+
+For the OpenAM rebuild the notice is short rather than a countdown, because
+**there is almost nothing anyone can do on OpenAM right now**: of the nine
+requirements above, one is ticked, seven need an administrator nobody has, and only
+*self-service profile edit* remains open to an ordinary user.
+
+🔴 **The real gate on that rebuild is reproducibility, not elapsed time.** There is
+**no post-install script for this stack** — confirmed on `iam/openam`, which carries
+only the generic `scripts/validate.sh`. `stacks/openam/README.md` says so itself: a
+fresh deploy comes up with the stock DataStore chain, no forced password change and
+no accounts. So rebuilding today would replace the exact configuration William and
+Rob tested against, with nothing in the repository able to restore it, and their
+OpenAM findings would stop describing the deployed system. Either script the
+post-install first, or accept that those findings reset with it.
+
+**Which makes one question worth answering before any of that: is OpenAM still a
+live candidate?** It is the only one of the four nobody can administer, and the only
+one whose mail an evaluator called *"frankly isn't acceptable"*. If it is going to be
+dropped, both the rebuild and the script are wasted work.
 
 Paid tier: Authentik ships an `authentik/enterprise/` directory under a separate
 EE licence (present at tag 2026.8.3). Which features sit behind it, and whether
