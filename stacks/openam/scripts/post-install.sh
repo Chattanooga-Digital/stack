@@ -89,10 +89,10 @@ DJPW=$(mktemp);  printf '%s' "$DIRECTORY_PASSWORD"   > "$DJPW";   chmod 0400 "$D
 trap 'rm -f "$PWFILE" "$DJPW" /tmp/step.out' EXIT
 
 # ------------------------------------------------- 0. wait for the directory prep
-# Swarm starts every service at once and depends_on means nothing here. An
-# UNCONFIGURED OpenAM still answers isAlive.jsp, so waiting on that alone would
-# run the configurator against a directory with no base entry -- "Invalid
-# Suffix". dj-prep writes this marker only when it finished without failures.
+# Swarm starts every service at once and depends_on means nothing here, so
+# OpenAM being up says nothing about the directory: running the configurator
+# before the base entry exists fails "Invalid Suffix". dj-prep writes this marker
+# only when it finished without failures.
 echo "waiting for dj-prep ..."
 i=0
 while [ ! -f /ldif/.prep-done ] && [ "$i" -lt 120 ]; do i=$((i+1)); sleep 5; done
@@ -100,15 +100,26 @@ while [ ! -f /ldif/.prep-done ] && [ "$i" -lt 120 ]; do i=$((i+1)); sleep 5; don
 echo "ok: directory is prepared"
 
 # ------------------------------------------------------------- 1. wait for it
+# UP means Tomcat is serving the OpenAM webapp, in EITHER state:
+#   configured   -> isAlive.jsp answers 200
+#   unconfigured -> isAlive.jsp answers 302 to config/options.htm, the setup page
+# Measured on the first fresh 16.1.3 rebuild, inside the container and out. This
+# used to wait for 200 alone, on the belief that an unconfigured OpenAM answers
+# isAlive.jsp -- it does not -- so a fresh stack waited ten minutes and gave up
+# on a server that had been ready the whole time. Anything else (000, 404, 502
+# from Traefik while Tomcat starts) is not up yet.
 echo "waiting for OpenAM at $OPENAM_URL ..."
-i=0
+i=0; state=''
 while [ "$i" -lt 120 ]; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' "$OPENAM_URL/isAlive.jsp" 2>/dev/null || echo 000)
-  [ "$code" = "200" ] && break
+  out=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$OPENAM_URL/isAlive.jsp" 2>/dev/null || echo 000)
+  case "$out" in
+    200\ *)                         state=configured; break ;;
+    302\ */openam/config/options.htm) state=unconfigured; break ;;
+  esac
   i=$((i+1)); sleep 5
 done
-[ "$i" -ge 120 ] && { echo "FAILED: OpenAM never came up"; exit 1; }
-echo "ok: OpenAM is responding"
+[ -n "$state" ] || { echo "FAILED: OpenAM never came up (last answer: ${out:-none})"; exit 1; }
+echo "ok: OpenAM is responding ($state)"
 
 # ------------------------------------------------------- 2. configure if needed
 # A configured instance answers isAlive.jsp AND has a bootstrap file.
