@@ -278,7 +278,12 @@ it.
 | OpenAM | `https://openam.staging.chattanooga.digital/openam/` | short name |
 | Zitadel | `https://zitadel.staging.chattanooga.digital/` | email address |
 
-**There is a walkthrough: [Walking the four candidates](iam-walkthrough.md).** It
+**There is a walkthrough: [Walking the four candidates](iam-walkthrough.md)**, whose
+live copy is open to every co-op account, not only the evaluators:
+
+https://cloud.chattanooga.digital/apps/collectives/IAM-Evaluation-5/IAM-evaluation-walking-the-four-candidates-3198
+
+It
 starts by having you create a least-privilege twin of yourself on each system,
 because every requirement in the table above is experienced by somebody who is
 *not* an administrator, and all five of you are now administrators.

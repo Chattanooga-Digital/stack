@@ -6,17 +6,27 @@ This is the companion to the [evaluation checklist](iam.md#evaluation-checklist)
 The checklist says *what* to decide; this says *what to do on a Tuesday evening*
 to be able to decide it.
 
-🔴 **The evaluators read this in Nextcloud, not here.** The same walkthrough is a
-page in the **Operations** collective, whose five members are exactly the five
-evaluators:
+🔴 **The evaluators read this in Nextcloud, not here.** The live copy is a page in
+the **IAM Evaluation** collective, which **every co-op account can open** — all 15
+human accounts inherit access through the `admin` and `members` groups, not just
+the five people testing:
 
-https://cloud.chattanooga.digital/apps/collectives/Operations
+https://cloud.chattanooga.digital/apps/collectives/IAM-Evaluation-5/IAM-evaluation-walking-the-four-candidates-3198
 
-That is the copy people will actually open, and where their notes go. This file
-is the version-controlled copy; if the two drift, the collective is what the
-evaluation was run against. Evaluation notes were, until 2026-09-22, sitting in
-Greg's and Rob's **private** folders where neither could read the other's, which
-is the problem the collective page exists to stop repeating.
+That is the copy people will actually open, and where their notes go. This file is
+the version-controlled copy; if the two drift, the collective is what the
+evaluation was run against.
+
+It landed first in the five-person **Operations** collective, which was wrong:
+choosing an identity provider decides how everyone signs in to everything the
+co-op runs, there is nothing confidential in it, and anyone who wants to read
+along or try a candidate should not have to be invited. The Operations page is now
+a stub pointing here, because its URL had already been shared and two full copies
+is how documents quietly start disagreeing.
+
+Evaluation notes were, until 2026-09-22, sitting in Greg's and Rob's **private**
+folders where neither could read the other's, which is the problem this page
+exists to stop repeating.
 
 It exists because of a measurement taken on 2026-09-22. William's Deck card #103
 asked for admin accounts for Greg, Adam, Jon, Rob and Will on all four
