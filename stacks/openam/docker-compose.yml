@@ -64,6 +64,93 @@ services:
         limits:
           memory: ${MEM_LIMIT_OPENAM:-1500M}
 
+  # ---------------------------------------------------------------- one-shots
+  # Everything below replaces work that was done by hand on 2026-09-18 and
+  # therefore did not survive into the repository. A fresh deploy without these
+  # comes up with the stock DataStore chain, no self-service, no mail and no
+  # accounts - a different system from the one being evaluated.
+
+  # The schema LDIFs ship inside the OpenAM image; the LDAP tools ship inside
+  # the OpenDJ one. Neither image has both, so the files move across on a shared
+  # volume rather than either container growing a dependency it should not have.
+  ldif-export:
+    image: openidentityplatform/openam:${OPENAM_VERSION:?OPENAM_VERSION not set}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        SRC=/usr/local/tomcat/webapps/openam/WEB-INF/template/ldif/opendj
+        for f in opendj_user_schema opendj_dashboard opendj_deviceprint \
+                 opendj_kba opendj_oathdevices opendj_pushdevices; do
+          cp "$$SRC/$$f.ldif" /ldif/ && echo "exported $$f.ldif"
+        done
+    volumes:
+      - openam-ldif:/ldif
+    networks:
+      - openam_internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: none
+
+  dj-prep:
+    image: openidentityplatform/opendj:${OPENDJ_VERSION:-5.1.2}
+    entrypoint: ["/bin/sh", "/opendj-prep.sh"]
+    configs:
+      - source: opendj_prep_sh
+        target: /opendj-prep.sh
+        mode: 0555
+    environment:
+      DIRECTORY_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
+      BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
+    volumes:
+      - openam-ldif:/ldif
+    networks:
+      - openam_internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: none
+
+  post-install:
+    image: openidentityplatform/openam:${OPENAM_VERSION:?OPENAM_VERSION not set}
+    entrypoint: ["/bin/sh", "/post-install.sh"]
+    configs:
+      - source: openam_post_install_sh
+        target: /post-install.sh
+        mode: 0555
+    environment:
+      OPENAM_URL: https://${DOMAIN:?DOMAIN not set}/openam
+      OPENAM_ADMIN_PASSWORD: ${OPENAM_ADMIN_PASSWORD:?OPENAM_ADMIN_PASSWORD not set}
+      DIRECTORY_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
+      BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
+      DIRECTORY_SERVER: opendj
+      DIRECTORY_PORT: "1389"
+      OPENAM_USERS: ${OPENAM_USERS:-}
+      SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-resend}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@get.chattanooga.digital}
+    volumes:
+      - openam-home:/usr/openam
+    networks:
+      - openam_internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: none
+
 networks:
   traefik_net:
     external: true
@@ -73,6 +160,17 @@ networks:
   # evaluated. Every other stack on both clusters owns its own the same way.
   openam_internal: {}
 
+configs:
+  # Swarm configs are IMMUTABLE. Bump the name when the script changes, or the
+  # redeploy fails with a config-already-exists error that names nothing useful.
+  opendj_prep_sh:
+    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_1}
+    file: ./scripts/opendj-prep.sh
+  openam_post_install_sh:
+    name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_1}
+    file: ./scripts/post-install.sh
+
 volumes:
   openam-config:
   openam-home:
+  openam-ldif:
