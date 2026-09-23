@@ -139,11 +139,19 @@ you judge its permission model.
 
 Sign in at `https://zitadel.staging.chattanooga.digital/ui/console`.
 
-🔴 **Your login name is your email address, not your short username.** Zitadel
-qualifies login names with the organisation's domain. This is the single thing
-that has already cost an evaluator a session: Rob tried `raitchison`, it failed,
-and `raitch@pm.me` worked. The invitation mail led with the short name and was
-wrong to.
+🔴 **Your login name is your email address, not your short username** — and the
+reason is ours, not Zitadel's. The five accounts here were created with the email
+address in the `userName` field, while the same five on Keycloak, Authentik and
+OpenAM were created with short names. Zitadel does **not** qualify login names with
+a domain on this instance (`userLoginMustBeDomain` is off; an account created as
+`turtlewolfe-test` signs in as exactly that). The invitation mail led with the short
+name and was wrong to.
+
+This cost two evaluators a session. Rob tried `raitchison`, it failed, and
+`raitch@pm.me` worked. William tried `wroush`, got *"User could not be found"*, and
+reported that Zitadel had no password reset page for him — **which was true**, because
+the Reset Password link only appears on the password screen, and a login name that
+does not resolve never reaches it. See [the settled result](iam.md#1-requirements-each-must-pass).
 
 All five of you now hold `IAM_OWNER` on the instance and `ORG_OWNER` on the
 organisation, granted 2026-09-22.

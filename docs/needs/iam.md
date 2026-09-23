@@ -70,7 +70,7 @@ access; all over standard protocols.
 | SAML provider, verified with a real client | [ ] | [ ] | [ ] | [ ] |
 | MFA: TOTP enrolled and used | [ ] | [ ] | [ ] | [ ] |
 | MFA: passkey enrolled and used | [ ] | [ ] | [ ] | [ ] |
-| Self-service password reset | [x] `JP 2026-09-19` `RA 2026-09-21` | [x] `JP 2026-09-19` `RA 2026-09-21` | [x] `JP 2026-09-19` `RA 2026-09-21` | [x] `JP 2026-09-19` `RA 2026-09-21` |
+| Self-service password reset | [x] `JP 2026-09-19` `RA 2026-09-21` | [x] `JP 2026-09-19` `RA 2026-09-21` | [x] `JP 2026-09-19` `RA 2026-09-21` `JP 2026-09-23` | [x] `JP 2026-09-19` `RA 2026-09-21` |
 | Self-service profile edit | [ ] | [ ] | [ ] | [ ] |
 | Group claims reach a client app | [ ] | [ ] | [ ] | [ ] |
 | Disabling the user locks them out of a client app | [ ] | [ ] | [ ] | [ ] |
@@ -99,43 +99,55 @@ same reason his report of the admin gap went unactioned for three days.)*
 | Zitadel | *"Zitadel doesn't even have a password reset page for me to use"* |
 | Authentik + OpenAM | *"I don't appear to be an admin on Authentik or OpenAM"* |
 
-🔴 **William's Zitadel line contradicts a ticked box on this page**, and the
-contradiction is unresolved. Self-service password reset is ticked for Zitadel
-`JP 2026-09-19` `RA 2026-09-21`; William, on 2026-09-19, could not find a reset
-page at all. Rob succeeded on the 21st once he used his email address as the login
-name. Whether William hit the login-name defect, a genuinely absent page, or
-something else has not been established — and until it is, that tick is contested
-by the person who owns the infrastructure. **Do not average the two; settle it.**
+🟢 **SETTLED 2026-09-23. Zitadel's self-service password reset works, and
+William's report was accurate.** Both were true at once, because the reset link is
+only reachable once a valid login name has been entered, and the name he was told
+to use does not exist on Zitadel.
 
-| | Rob, 2026-09-21 |
+Measured end to end, on a real account, in this order:
+
+| step | result |
 |---|---|
-| Keycloak | *"Still has an active UI in click-through after submission - so I ask myself, did it work?"* |
-| Authentik | *"Landed at a better next steps style page - had to login twice after reset, may have been a one-time issue"* |
-| OpenAM | *"Gives first and last name submission as an additional option for reset... Same loop Will mentioned, must reset again after resetting + says the password must be different (how would it know?)"* |
-| Zitadel | *"Register flow is different - welcome back wording on page. Tried raitchison and did not work, raitch@pm.me did. Received password has changed email unlike other three systems. Sent immediately to 2-factor screen on next login."* |
+| login name `wroush` | *"User could not be found"*. No password screen, and **no reset link anywhere on the page** |
+| login name `william.roush@roushtech.net` | password screen, carrying a **Reset Password** link |
+| clicking it | *"Password Reset Link Sent"* |
+| the mail | arrived at the inbox (not spam) **3 seconds** later, from `no-reply@get.chattanooga.digital` |
+| following the link, setting a password | *"Password successfully set"* |
+| signing in with that new password | **succeeded** |
 
-Only Keycloak leaves the person unsure whether the reset worked, which matters more
-for the co-op's stated goal of a low skill threshold than any feature in the table
-above. Only Zitadel confirms the change by mail. Both of them independently
-disliked OpenAM's reset loop, which is the one point the two sets of notes agree
-on without having seen each other.
+So the tick stands, and `RA 2026-09-21` was right to set it. The row now also
+carries `JP 2026-09-23` for the full chain rather than just the mail.
 
-🔴 **Two of these are ours, not the products', and must not be scored against the
-candidate.**
+🔴 **The cause is ours, and it is not what this page previously said.** It was
+written up as Zitadel qualifying login names with the organisation's domain. That
+is false on this instance: `userLoginMustBeDomain` is off, and a user created as
+`turtlewolfe-test` logs in as exactly `turtlewolfe-test`. What actually happened is
+that **the five Zitadel accounts were created with the email address in the
+`userName` field**, while the same five accounts on Keycloak, Authentik and OpenAM
+were created with short names. Measured in `projections.users14`: every account
+created 2026-09-19 has `username` identical to its email.
 
-- **The OpenAM double reset is a setting we chose.** Measured on the staging
-  directory 2026-09-22: `ds-cfg-force-change-on-reset: true`. A self-service reset
-  counts as an administrative reset, so the account is flagged and the login chain
-  demands a second change immediately. Remove that flag and the loop goes with it.
-  Rob's aside — *"how would it know?"* — also has an answer, and it is not password
-  history: `ds-cfg-password-history-count: 0` and `ds-cfg-password-history-duration:
-  0 seconds`, so nothing is remembered. It is comparing against the **current**
-  password, which it holds.
-- **The Zitadel login name is a defect in the invitation, not the product.** Zitadel
-  qualifies login names with the org domain, which `stacks/zitadel/README.md` already
-  documents; the invitation led with the short username anyway, so Rob tried
-  `raitchison`, it failed, and his email address worked. Everyone else was sent the
-  same wording.
+The invitation then told everyone to use their short name. On three systems that
+was right; on Zitadel it names an account that does not exist.
+
+**And no mail could have corrected them.** The Zitadel mail sent on 2026-09-19 was
+a *Reset password* mail, which does not mention a username. Zitadel's *Initialize
+User* mail does — *"Use the username turtlewolfe-test to login"* — but that is sent
+on account creation and was not used for these five. There was no way for William
+to learn his Zitadel login name from anything he had been sent.
+
+🟡 **A separate, real finding fell out of the same test.** A Zitadel user who has
+never completed initialisation gets the password screen with **no Reset Password
+link at all** — confirmed against a freshly created account in `USER_STATE_INITIAL`.
+Self-service recovery therefore does not cover the member most likely to need it:
+the one who never finished signing up the first time. That is the product's
+behaviour, not our configuration, and belongs in the scoring.
+
+**The remaining decision: make Zitadel consistent with the other three.** As it
+stands the evaluation is comparing four products on which one has a different
+username convention, which is a confound we introduced. Renaming the five Zitadel
+accounts to short names would remove it, at the cost of changing a login name Rob
+has already learned. Worth deciding deliberately rather than leaving.
 
 Paid tier: Authentik ships an `authentik/enterprise/` directory under a separate
 EE licence (present at tag 2026.8.3). Which features sit behind it, and whether
