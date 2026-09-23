@@ -126,7 +126,11 @@ echo "ok: OpenAM is responding ($state)"
 if [ -f "$AMCONFIG/boot.json" ]; then
   echo "skip: already configured (boot.json present)"
 else
-  PROPS=$(mktemp); chmod 0400 "$PROPS"
+  # mktemp creates it 0600 -- owner-only already. Do NOT chmod 0400 first: this
+  # image runs as a non-root user, so the write below would be refused and the
+  # configurator would read an empty file ("Property 'SERVER_URL' was not set").
+  # That is exactly what the first fresh 16.1.3 run did.
+  PROPS=$(mktemp)
   cat > "$PROPS" <<EOF
 SERVER_URL=$SERVER_URL
 DEPLOYMENT_URI=/openam
@@ -150,6 +154,12 @@ DS_DIRMGRPASSWD=$DIRECTORY_PASSWORD
 EOF
   step "configurator" java -jar "$jar" --file "$PROPS"
   rm -f "$PROPS"
+  # Everything after this needs a configured server. Stop here rather than let
+  # ssoadm and every phase below fail for a reason that is not theirs.
+  if [ "$fail" -ne 0 ] || [ ! -f "$AMCONFIG/boot.json" ]; then
+    echo "STOPPING: OpenAM is not configured (no $AMCONFIG/boot.json); nothing below can work."
+    exit 1
+  fi
 fi
 
 # ------------------------------------------------------------ 3. ssoadm setup
