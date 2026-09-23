@@ -66,7 +66,8 @@ COOKIE_DOMAIN="${OPENAM_COOKIE_DOMAIN:-.${_host#*.}}"   # 09-18: .staging.chatta
 # version's WAR against an older configurator. Check the version, not presence.
 # (Until 2026-09-23 this said the tools were not in the image at all. Wrong: the
 # search behind it excluded /usr/openam, the one path the volume masks.)
-jar=$(ls "$CFG"/openam-configurator-tool-*.jar 2>/dev/null | head -1)
+jar=''
+for f in "$CFG"/openam-configurator-tool-*.jar; do [ -f "$f" ] && { jar=$f; break; }; done
 if [ -z "$jar" ] || [ ! -f "$ADM/setup" ]; then
   echo "FAILED: no admin tools under /usr/openam. openam-home should have been filled"
   echo "        from the image on first mount; was it created some other way?"
@@ -136,7 +137,7 @@ ROOT_SUFFIX=$BASE_DN
 DS_DIRMGRDN=cn=Directory Manager
 DS_DIRMGRPASSWD=$DIRECTORY_PASSWORD
 EOF
-  step "configurator" java -jar "$CFG"/openam-configurator-tool-*.jar --file "$PROPS"
+  step "configurator" java -jar "$jar" --file "$PROPS"
   rm -f "$PROPS"
 fi
 
@@ -150,7 +151,9 @@ else
 fi
 SSOADM="$ADM/openam/bin/ssoadm"
 [ -x "$SSOADM" ] || { echo "FAILED: ssoadm missing after setup"; exit 1; }
-ADMOPTS="-u amadmin -f $PWFILE"
+# Every call authenticates as amadmin. A function rather than a string of options,
+# so nothing depends on the shell word-splitting a variable.
+adm() { _sub=$1; shift; "$SSOADM" "$_sub" -u amadmin -f "$PWFILE" "$@"; }
 
 # --------------------------------------------- 4. the realm authentication chain
 # A fresh instance has ONLY the stock `ldapService` chain, whose single DataStore
@@ -158,14 +161,14 @@ ADMOPTS="-u amadmin -f $PWFILE"
 # password change never happens. `userLdapService` uses the LDAP module, which
 # honours them. amadmin CANNOT bind through LDAP (it lives in the config store,
 # not under the user search base), so the admin chain stays on ldapService.
-if $SSOADM list-auth-cfgs -e / $ADMOPTS 2>/dev/null | grep -q userLdapService; then
+if adm list-auth-cfgs -e / 2>/dev/null | grep -q userLdapService; then
   echo "skip: userLdapService chain exists"
 else
-  step "create userLdapService chain" $SSOADM create-auth-cfg -e / -m userLdapService $ADMOPTS
-  step "add LDAP REQUIRED to the chain" $SSOADM add-auth-cfg-entr -e / -m userLdapService \
-      -o LDAP -c REQUIRED -p 0 $ADMOPTS
+  step "create userLdapService chain" adm create-auth-cfg -e / -m userLdapService
+  step "add LDAP REQUIRED to the chain" adm add-auth-cfg-entr -e / -m userLdapService \
+      -o LDAP -c REQUIRED -p 0
 fi
-step "point the realm at it" $SSOADM set-svc-attrs -e / -s iPlanetAMAuthService $ADMOPTS \
+step "point the realm at it" adm set-svc-attrs -e / -s iPlanetAMAuthService \
   -a iplanet-am-auth-org-config=userLdapService \
      iplanet-am-auth-admin-auth-module=ldapService \
      iplanet-am-auth-alias-attr-name=uid
@@ -174,7 +177,7 @@ step "point the realm at it" $SSOADM set-svc-attrs -e / -s iPlanetAMAuthService 
 # The REST config endpoint writes realm-level values while the self-service
 # handler reads GLOBAL defaults, so a successful-looking REST write changes
 # nothing. set-attr-defs is what actually lands.
-step "self-service password reset" $SSOADM set-attr-defs -s selfService -t organization $ADMOPTS \
+step "self-service password reset" adm set-attr-defs -s selfService -t organization \
   -a selfServiceForgottenPasswordEnabled=true \
      selfServiceForgottenPasswordEmailVerificationEnabled=true \
      selfServiceForgottenPasswordKbaEnabled=false \
@@ -189,7 +192,7 @@ if [ -z "${SMTP_PASSWORD:-}" ]; then
   echo "SKIPPED: mail server -- SMTP_PASSWORD is empty, so self-service reset cannot send mail."
   echo "         Set it in the stack environment and redeploy; the phase is idempotent."
 else
-step "mail server" $SSOADM set-attr-defs -s MailServer -t organization $ADMOPTS \
+step "mail server" adm set-attr-defs -s MailServer -t organization \
   -a forgerockEmailServiceSMTPHostName="$SMTP_HOST" \
      forgerockEmailServiceSMTPHostPort="$SMTP_PORT" \
      forgerockEmailServiceSMTPUserName="$SMTP_USER" \
@@ -202,14 +205,41 @@ fi
 # ------------------------------------------------------------- 6. the accounts
 # Created without a password on purpose: people set their own from the mail the
 # system sends. We never learn it, so there is nothing to store or leak.
-for u in ${OPENAM_USERS:-}; do
-  if $SSOADM show-identity -e / -i "$u" -t User $ADMOPTS >/dev/null 2>&1; then
+#
+# ONE RECORD PER PERSON, separated by ';', fields by ',':  uid,mail,Given,Surname
+# The mail is not decoration: self-service reset sends to the account's `mail`
+# attribute, so an account created without one can never receive its link. Until
+# 2026-09-23 this took bare usernames and would have made exactly those accounts;
+# the 09-18 instance's five carried mail, givenName, sn and cn, measured from its
+# directory backup. An entry missing any field is refused, not half-created.
+#
+# Create-only: an existing account is left alone, so a person who changes their own
+# address is not reverted by the next deploy.
+set -f                     # the records are data; never let the shell glob them
+_ifs=$IFS; IFS=';'; n=0
+for rec in ${OPENAM_USERS:-}; do
+  IFS=$_ifs
+  n=$((n+1))
+  rec=$(printf '%s' "$rec" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  [ -n "$rec" ] || continue
+  IFS=, read -r u mail given sn extra <<EOF
+$rec
+EOF
+  IFS=$_ifs
+  case "$u" in ''|*[!a-z0-9._-]*) u='' ;; esac
+  case "$mail" in *@*.*) ;; *) mail='' ;; esac
+  if [ -z "$u" ] || [ -z "$mail" ] || [ -z "$given" ] || [ -z "$sn" ] || [ -n "$extra" ]; then
+    echo "FAILED: OPENAM_USERS record $n is not uid,mail,Given,Surname -- not created"
+    fail=1; continue
+  fi
+  if adm show-identity -e / -i "$u" -t User >/dev/null 2>&1; then
     echo "skip: $u exists"
   else
-    step "create $u" $SSOADM create-identity -e / -i "$u" -t User $ADMOPTS \
-      -a inetuserstatus=Active
+    step "create $u" adm create-identity -e / -i "$u" -t User \
+      -a inetuserstatus=Active "mail=$mail" "givenName=$given" "sn=$sn" "cn=$given $sn"
   fi
 done
+IFS=$_ifs; set +f
 
 # Note: force-change-on-reset lives in opendj-prep.sh, because dsconfig ships in
 # the OpenDJ image and not this one.

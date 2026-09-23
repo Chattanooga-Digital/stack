@@ -220,11 +220,16 @@ are added by creating the account and letting the system send them a set-passwor
 link. We never learn their password, so there is nothing for us to store, leak, or be
 asked to rotate.
 
-**Mail is configured in the application, not here.** Unlike Authentik and Zitadel,
-this one takes no SMTP environment variables — it is set in the admin console after
-first boot. That is a manual step, and until it is done every invitation and every
-password reset **fails silently**. Gancio sat in exactly that state from 4 September
-with nobody noticing, so check it deliberately rather than assuming.
+**Mail lives in OpenAM's config store, and `post-install` writes it there** from the
+`SMTP_*` stack variables. On 2026-09-18 it was set by hand in the admin console, which
+is why a rebuild would have lost it. If `SMTP_PASSWORD` is empty the phase is skipped
+and says so — and until it runs, every invitation and every password reset **fails
+silently**. Gancio sat in exactly that state from 4 September with nobody noticing, so
+check it deliberately rather than assuming.
+
+**An account needs a `mail` attribute to receive its link.** Self-service reset sends
+to it, so `OPENAM_USERS` carries `uid,mail,Given,Surname` per person, and a record
+missing a field is refused rather than half-created.
 
 ## The live instance's actual configuration, measured 2026-09-23
 
@@ -274,8 +279,11 @@ forgerockEmailServiceSMTPSubject     = Set your password
 ```
 
 **Accounts** — five entries under `ou=people,<basedn>`: `glaudeman`, `azahorscak`,
-`turtlewolfe`, `raitchison`, `wroush`, all `inetUserStatus: Active`, no group
-membership and no delegation privilege. `ou=groups` exists and is empty.
+`turtlewolfe`, `raitchison`, `wroush`, all `inetUserStatus: Active`, each carrying
+`mail`, `givenName`, `sn` and `cn`, no group membership and no delegation privilege.
+`ou=groups` exists and is empty. *(The first version of this line named only the uids
+and status, and the post-install written from it created accounts with no address to
+send a reset link to. Re-measured from the directory backup the same day.)*
 
 **Directory password policy** — `ds-cfg-force-change-on-reset: true`, with
 `ds-cfg-password-history-count: 0` and `ds-cfg-password-history-duration: 0 seconds`.
