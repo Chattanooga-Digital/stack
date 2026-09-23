@@ -99,6 +99,47 @@ same reason his report of the admin gap went unactioned for three days.)*
 | Zitadel | *"Zitadel doesn't even have a password reset page for me to use"* |
 | Authentik + OpenAM | *"I don't appear to be an admin on Authentik or OpenAM"* |
 
+| | Rob, 2026-09-21 |
+|---|---|
+| Keycloak | *"Still has an active UI in click-through after submission - so I ask myself, did it work?"* |
+| Authentik | *"Landed at a better next steps style page - had to login twice after reset, may have been a one-time issue"* |
+| OpenAM | *"Gives first and last name submission as an additional option for reset... Same loop Will mentioned, must reset again after resetting + says the password must be different (how would it know?)"* |
+| Zitadel | *"Register flow is different - welcome back wording on page. Tried raitchison and did not work, raitch@pm.me did. Received password has changed email unlike other three systems. Sent immediately to 2-factor screen on next login."* |
+
+Only Keycloak leaves the person unsure whether the reset worked, which matters more
+for the co-op's stated goal of a low skill threshold than any feature in the table
+above. Only Zitadel confirms the change by mail.
+
+🔴 **CORRECTED 2026-09-23: the OpenAM double reset is the PRODUCT'S, and this page
+previously filed it as ours.** Yesterday it said the loop was a setting we chose and
+must not be scored against the candidate. That is wrong, and wrong in OpenAM's
+favour, so the row was about to be discounted for no reason.
+
+Forcing a change on a credential somebody else set is best practice, was settled on
+2026-09-19, and is applied to **all four** through each product's own mechanism. The
+policy is uniform. What differs is what each one does when the user then completes a
+**self-service** reset:
+
+| | does completing a self-service reset clear the forced-change flag? |
+|---|---|
+| **Keycloak** | **Yes.** `requiredActions` is `[]` for `raitchison` and `wroush`, the two who completed it, and still `['UPDATE_PASSWORD']` for the three who have not |
+| **Zitadel** | **Yes.** Walked end to end 2026-09-23 — reset, set password, signed straight in, no second prompt |
+| **OpenAM** | **No.** `ds-cfg-force-change-on-reset: true` makes a self-service reset count as an *administrative* one, so the chain demands a second change immediately |
+| **Authentik** | **Unmeasured.** Rob's *"had to login twice after reset"* may be this same behaviour, and is one test away |
+
+So William's *"makes me reset my password, then makes me change it right after
+resetting it... that's... awful"* is a fair hit on the product. Removing the flag,
+which this page previously recommended, would have hidden a real difference between
+candidates rather than corrected a mistake of ours.
+
+Rob's aside — *"how would it know?"* — still has its answer, and it is not password
+history: `ds-cfg-password-history-count: 0` and `ds-cfg-password-history-duration: 0
+seconds`, so nothing is remembered. It compares against the **current** password,
+which it holds.
+
+*(The other attribution on this page — the Zitadel login name — really is ours, and
+is settled immediately below.)*
+
 🟢 **SETTLED 2026-09-23. Zitadel's self-service password reset works, and
 William's report was accurate.** Both were true at once, because the reset link is
 only reachable once a valid login name has been entered, and the name he was told
