@@ -86,7 +86,7 @@ echo "ok: admin tools on the volume match OPENAM_VERSION ($have)"
 # gives 0600, and `chmod +x` on it yields 0700 -- both wrong here. 0400.
 PWFILE=$(mktemp); printf '%s' "$OPENAM_ADMIN_PASSWORD" > "$PWFILE"; chmod 0400 "$PWFILE"
 DJPW=$(mktemp);  printf '%s' "$DIRECTORY_PASSWORD"   > "$DJPW";   chmod 0400 "$DJPW"
-trap 'rm -f "$PWFILE" "$DJPW" /tmp/step.out' EXIT
+trap 'rm -f "$PWFILE" "$DJPW" /tmp/step.out ${SS:+"$SS"} ${MS:+"$MS"}' EXIT
 
 # ------------------------------------------------- 0. wait for the directory prep
 # Swarm starts every service at once and depends_on means nothing here, so
@@ -195,32 +195,63 @@ step "point the realm at it" adm set-svc-attrs -e / -s iPlanetAMAuthService \
      iplanet-am-auth-alias-attr-name=uid
 
 # ------------------------------------------- 5. self-service and the mail server
-# The REST config endpoint writes realm-level values while the self-service
-# handler reads GLOBAL defaults, so a successful-looking REST write changes
-# nothing. set-attr-defs is what actually lands.
-step "self-service password reset" adm set-attr-defs -s selfService -t organization \
-  -a selfServiceForgottenPasswordEnabled=true \
-     selfServiceForgottenPasswordEmailVerificationEnabled=true \
-     selfServiceForgottenPasswordKbaEnabled=false \
-     selfServiceForgottenPasswordCaptchaEnabled=false \
-     selfServiceForgottenPasswordTokenTTL=86400 \
-     selfServiceEncryptionKeyPairAlias=selfserviceenctest \
-     selfServiceSigningSecretKeyAlias=selfservicesigntest
+# Each goes TWO places, because 09-18 had both and a rebuild with one did not work:
+#   - the service's global defaults (set-attr-defs). The self-service handler reads
+#     these; a REST write to the realm alone changed nothing on 09-18.
+#   - the ROOT REALM, as an assigned service (add-svc-realm, or set-realm-svc-attrs
+#     once assigned). The 09-18 directory has its own ou=default,ou=OrganizationConfig
+#     entry for MailServer and for selfService, added ~11 hours after configuration.
+#     A rebuild with defaults only -- measured 2026-09-23 -- ran the reset flow to
+#     "emailValidation" and sent NO mail: no error, no attempt, nothing in debug/.
+# Values go in owner-only datafiles (ssoadm -D), so the SMTP password is never in
+# argv, and each file is deleted as soon as it is used.
+
+# realm_svc <service> <datafile>: assign to the root realm, or update if assigned.
+realm_svc() {
+  _svcs=$(adm show-realm-svcs -e / 2>&1) || {
+    echo "FAILED: realm $1 -- could not list the realm's services"; fail=1; return 0; }
+  if printf '%s\n' "$_svcs" | grep -qx "$1"; then
+    step "realm $1 (update)" adm set-realm-svc-attrs -e / -s "$1" -D "$2"
+  else
+    step "realm $1 (assign)" adm add-svc-realm -e / -s "$1" -D "$2"
+  fi
+}
+
+SS=$(mktemp)
+cat > "$SS" <<'EOF'
+selfServiceForgottenPasswordEnabled=true
+selfServiceForgottenPasswordEmailVerificationEnabled=true
+selfServiceForgottenPasswordKbaEnabled=false
+selfServiceForgottenPasswordCaptchaEnabled=false
+selfServiceForgottenPasswordTokenTTL=86400
+selfServiceEncryptionKeyPairAlias=selfserviceenctest
+selfServiceSigningSecretKeyAlias=selfservicesigntest
+EOF
+step "self-service password reset (defaults)" adm set-attr-defs -s selfService -t organization -D "$SS"
+realm_svc selfService "$SS"
+rm -f "$SS"
 
 # OpenAM's mail service has no STARTTLS -- sslState is SSL or Non SSL only -- so
-# this is Resend on 465, not 587.
+# this is Resend on 465, not 587. The message body is the 09-18 value; the README's
+# first record of this service left it out, and the default is empty.
 if [ -z "${SMTP_PASSWORD:-}" ]; then
   echo "SKIPPED: mail server -- SMTP_PASSWORD is empty, so self-service reset cannot send mail."
   echo "         Set it in the stack environment and redeploy; the phase is idempotent."
 else
-step "mail server" adm set-attr-defs -s MailServer -t organization \
-  -a forgerockEmailServiceSMTPHostName="$SMTP_HOST" \
-     forgerockEmailServiceSMTPHostPort="$SMTP_PORT" \
-     forgerockEmailServiceSMTPUserName="$SMTP_USER" \
-     forgerockEmailServiceSMTPUserPassword="${SMTP_PASSWORD:-}" \
-     forgerockEmailServiceSMTPSSLEnabled=SSL \
-     forgerockEmailServiceSMTPFromAddress="$SMTP_FROM" \
-     forgerockEmailServiceSMTPSubject="Set your password"
+  MS=$(mktemp)
+  printf '%s\n' \
+    "forgerockEmailServiceSMTPHostName=$SMTP_HOST" \
+    "forgerockEmailServiceSMTPHostPort=$SMTP_PORT" \
+    "forgerockEmailServiceSMTPUserName=$SMTP_USER" \
+    "forgerockEmailServiceSMTPUserPassword=$SMTP_PASSWORD" \
+    "forgerockEmailServiceSMTPSSLEnabled=SSL" \
+    "forgerockEmailServiceSMTPFromAddress=$SMTP_FROM" \
+    "forgerockEmailServiceSMTPSubject=Set your password" \
+    "forgerockEmailServiceSMTPMessage=Use the link below to choose a password for your account." \
+    > "$MS"
+  step "mail server (defaults)" adm set-attr-defs -s MailServer -t organization -D "$MS"
+  realm_svc MailServer "$MS"
+  rm -f "$MS"
 fi
 
 # exists | absent | error -- for one User identity. Three answers, not two: a check

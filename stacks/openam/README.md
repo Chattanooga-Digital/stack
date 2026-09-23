@@ -298,7 +298,15 @@ forgerockEmailServiceSMTPSSLEnabled  = SSL
 forgerockEmailServiceSMTPUserName    = resend
 forgerockEmailServiceSMTPFromAddress = no-reply@get.chattanooga.digital
 forgerockEmailServiceSMTPSubject     = Set your password
+forgerockEmailServiceSMTPMessage     = Use the link below to choose a password for your account.
 ```
+
+**Both of these are services ASSIGNED to the root realm**, not only global defaults:
+each has its own `ou=default,ou=OrganizationConfig` entry in the 09-18 directory,
+created about 11 hours after configuration. The first record here gave the DNs but
+not that consequence, and missed the message body. A rebuild that set the defaults
+alone ran the reset flow to `emailValidation` and sent **no mail** — no error, no
+attempt, nothing under `debug/`. `post-install` now writes both places.
 
 **Accounts** — five entries under `ou=people,<basedn>`: `glaudeman`, `azahorscak`,
 `turtlewolfe`, `raitchison`, `wroush`, all `inetUserStatus: Active`, each carrying
