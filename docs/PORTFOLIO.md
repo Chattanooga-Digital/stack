@@ -58,7 +58,8 @@ Initials used in checkboxes and Notes. Fill in your own.
 |---|---|---|
 | WR | William Roush | |
 | | Greg | |
-| | Jon | |
+| JP | Jon Pohlner | |
+| RA | Rob Aitchison | |
 
 ## Key
 
