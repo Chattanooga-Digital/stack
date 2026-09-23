@@ -268,28 +268,28 @@ rebuild from source is not one we can responsibly operate, so making the rebuild
 work is *part of evaluating it* rather than a chore beside it. The section above
 exists so that rebuild is faithful.
 
-🔴 **The rebuild is blocked on something the scripts cannot solve, and they say so
-first.** The OpenAM image ships the WAR and nothing else — no `ssoadm`, no
-configurator jar, and no LDAP client at all. `ssoconfiguratortools/` and
-`ssoadmintools/` on the live volume were downloaded and unpacked by hand on
-2026-09-18. Upstream publishes them per release as `SSOConfiguratorTools-<ver>.zip`
-(**4 MB**) and `SSOAdminTools-<ver>.zip` (**155 MB**). The conventions forbid
-fetching code at deploy time, a Swarm config caps at 500 KB, and 155 MB does not
-belong in git. So on a fresh volume `post-install.sh` exits at its first check with
-the reason, rather than twenty lines later with `Invalid Suffix`.
+**The admin tools ship in the image. The trap is a reused volume, not a missing
+download.** Upstream's Dockerfile — 15.0.3 and 16.1.3 alike, lines 27–30 of
+`openam-distribution/openam-distribution-docker/Dockerfile` — downloads
+`SSOConfiguratorTools` and `SSOAdminTools` at build time and unpacks them into
+`/usr/openam`. `openam-home` mounts over that path, so from inside a running
+container the image's copy is invisible; but Docker fills an **empty** named volume
+from the image on first mount. So a fresh `openam-home` gets the tools of the image
+that first mounts it, and a **reused** one keeps the tools of whatever image created
+it. Upgrading 15.0.3 → 16.1.3 while keeping the volume would run a 16.1.3 WAR against
+a 15.0.3 configurator. `post-install.sh` therefore checks the configurator's version
+against `OPENAM_VERSION` before it does anything, and says which volume to drop.
 
-Three ways to close it, none of which is a script change:
+What the image genuinely lacks is an LDAP client — no `ldapmodify`, no `dsconfig` —
+which is why the directory work lives in `dj-prep` on the OpenDJ image.
 
-1. **A derived image** with both tool sets baked in. Correct, and needs a build
-   and a registry this repo does not have.
-2. **REST instead of the tools.** The 4 MB configurator is only an HTTP client for
-   `/openam/config/`, and 16.x exposes most of `ssoadm` over `/json/`. The one known
-   gap — setting the realm's auth-chain config — was measured on **15.0.3** and
-   should be re-tested on 16.1.3 before it is assumed.
-3. **Vendor only the 4 MB configurator** and use REST for the rest.
-
-It is also a finding about the candidate: Keycloak, Authentik and Zitadel each
-ship as one image that administers itself.
+*Correction, 2026-09-23.* This section previously said the image shipped no admin
+tools, that the live volume's copy had been downloaded by hand on 2026-09-18, that a
+rebuild was blocked until a derived image or a REST rewrite existed, and that this
+set OpenAM apart from the other three candidates. All four statements were wrong,
+and were committed in d939429. The search behind them excluded `/usr/openam` — the one
+path the volume masks. The live volume's tools came from the 15.0.3 image on first
+mount. OpenAM, like the other three, ships as one image with its own tooling.
 
 A rebuild needs, in order: `OPENAM_ADMIN_PASSWORD` added to the stack environment
 and both `.env.example` files; the configurator run from that variable; the five

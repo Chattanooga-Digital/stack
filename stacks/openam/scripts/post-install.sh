@@ -36,6 +36,7 @@ step() {
 }
 
 : "${OPENAM_URL:?OPENAM_URL not set}"
+: "${OPENAM_VERSION:?OPENAM_VERSION not set}"
 : "${OPENAM_ADMIN_PASSWORD:?OPENAM_ADMIN_PASSWORD not set}"
 : "${OPENAM_AMLDAPUSER_PASSWORD:?OPENAM_AMLDAPUSER_PASSWORD not set}"
 : "${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}"
@@ -50,22 +51,28 @@ step() {
 CFG=/usr/openam/ssoconfiguratortools
 ADM=/usr/openam/ssoadmintools
 
-# 🔴 THE ADMIN TOOLS ARE NOT IN THE IMAGE. Measured 2026-09-23: the OpenAM image
-# ships the WAR and nothing else; ssoconfiguratortools/ and ssoadmintools/ on the
-# live instance were downloaded and unpacked by hand on 2026-09-18. Upstream
-# publishes them as SSOConfiguratorTools-<ver>.zip (4 MB) and
-# SSOAdminTools-<ver>.zip (155 MB) on the GitHub release. The stack conventions
-# forbid fetching code at deploy time, a Swarm config caps at 500 KB, and 155 MB
-# does not belong in git -- so until that is decided (derived image, or REST in
-# place of ssoadm), a fresh volume CANNOT get past this point. Say so, first.
-missing=""
-ls "$CFG"/openam-configurator-tool-*.jar >/dev/null 2>&1 || missing="$missing $CFG/openam-configurator-tool-<ver>.jar"
-[ -f "$ADM/setup" ] || missing="$missing $ADM/setup"
-if [ -n "$missing" ]; then
-  echo "FAILED: the OpenAM admin tools are not present on this volume:$missing"
-  echo "        See the note above this check, and ../README.md."
+# THE TOOLS COME FROM THE IMAGE, THROUGH THE VOLUME. Upstream's Dockerfile bakes
+# SSOConfiguratorTools and SSOAdminTools into /usr/openam; openam-home mounts over
+# it, and Docker fills an EMPTY named volume from the image on first mount. So a
+# fresh volume has this image's tools -- and a REUSED one keeps the tools of
+# whatever image created it. Upgrading while keeping openam-home would run this
+# version's WAR against an older configurator. Check the version, not presence.
+# (Until 2026-09-23 this said the tools were not in the image at all. Wrong: the
+# search behind it excluded /usr/openam, the one path the volume masks.)
+jar=$(ls "$CFG"/openam-configurator-tool-*.jar 2>/dev/null | head -1)
+if [ -z "$jar" ] || [ ! -f "$ADM/setup" ]; then
+  echo "FAILED: no admin tools under /usr/openam. openam-home should have been filled"
+  echo "        from the image on first mount; was it created some other way?"
   exit 1
 fi
+have=$(basename "$jar" .jar | sed 's/^openam-configurator-tool-//')
+if [ "$have" != "$OPENAM_VERSION" ]; then
+  echo "FAILED: openam-home carries configurator $have, but OPENAM_VERSION is $OPENAM_VERSION."
+  echo "        The volume was created by an older image and is masking this one's tools."
+  echo "        Rebuild with a fresh openam-home -- see ../README.md."
+  exit 1
+fi
+echo "ok: admin tools on the volume match OPENAM_VERSION ($have)"
 
 # ssoadm refuses a password file that is not readable by owner ONLY. mktemp
 # gives 0600, and `chmod +x` on it yields 0700 -- both wrong here. 0400.
