@@ -37,6 +37,7 @@ step() {
 
 : "${OPENAM_URL:?OPENAM_URL not set}"
 : "${OPENAM_ADMIN_PASSWORD:?OPENAM_ADMIN_PASSWORD not set}"
+: "${OPENAM_AMLDAPUSER_PASSWORD:?OPENAM_AMLDAPUSER_PASSWORD not set}"
 : "${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}"
 : "${BASE_DN:=dc=openam,dc=example,dc=org}"
 : "${DIRECTORY_SERVER:=opendj}"
@@ -49,11 +50,39 @@ step() {
 CFG=/usr/openam/ssoconfiguratortools
 ADM=/usr/openam/ssoadmintools
 
+# 🔴 THE ADMIN TOOLS ARE NOT IN THE IMAGE. Measured 2026-09-23: the OpenAM image
+# ships the WAR and nothing else; ssoconfiguratortools/ and ssoadmintools/ on the
+# live instance were downloaded and unpacked by hand on 2026-09-18. Upstream
+# publishes them as SSOConfiguratorTools-<ver>.zip (4 MB) and
+# SSOAdminTools-<ver>.zip (155 MB) on the GitHub release. The stack conventions
+# forbid fetching code at deploy time, a Swarm config caps at 500 KB, and 155 MB
+# does not belong in git -- so until that is decided (derived image, or REST in
+# place of ssoadm), a fresh volume CANNOT get past this point. Say so, first.
+missing=""
+ls "$CFG"/openam-configurator-tool-*.jar >/dev/null 2>&1 || missing="$missing $CFG/openam-configurator-tool-<ver>.jar"
+[ -f "$ADM/setup" ] || missing="$missing $ADM/setup"
+if [ -n "$missing" ]; then
+  echo "FAILED: the OpenAM admin tools are not present on this volume:$missing"
+  echo "        See the note above this check, and ../README.md."
+  exit 1
+fi
+
 # ssoadm refuses a password file that is not readable by owner ONLY. mktemp
 # gives 0600, and `chmod +x` on it yields 0700 -- both wrong here. 0400.
 PWFILE=$(mktemp); printf '%s' "$OPENAM_ADMIN_PASSWORD" > "$PWFILE"; chmod 0400 "$PWFILE"
 DJPW=$(mktemp);  printf '%s' "$DIRECTORY_PASSWORD"   > "$DJPW";   chmod 0400 "$DJPW"
 trap 'rm -f "$PWFILE" "$DJPW" /tmp/step.out' EXIT
+
+# ------------------------------------------------- 0. wait for the directory prep
+# Swarm starts every service at once and depends_on means nothing here. An
+# UNCONFIGURED OpenAM still answers isAlive.jsp, so waiting on that alone would
+# run the configurator against a directory with no base entry -- "Invalid
+# Suffix". dj-prep writes this marker only when it finished without failures.
+echo "waiting for dj-prep ..."
+i=0
+while [ ! -f /ldif/.prep-done ] && [ "$i" -lt 120 ]; do i=$((i+1)); sleep 5; done
+[ -f /ldif/.prep-done ] || { echo "FAILED: dj-prep never finished (no /ldif/.prep-done)"; exit 1; }
+echo "ok: directory is prepared"
 
 # ------------------------------------------------------------- 1. wait for it
 echo "waiting for OpenAM at $OPENAM_URL ..."
@@ -80,7 +109,7 @@ locale=en_US
 PLATFORM_LOCALE=en_US
 AM_ENC_KEY=
 ADMIN_PWD=$OPENAM_ADMIN_PASSWORD
-AMLDAPUSERPASSWD=$OPENAM_ADMIN_PASSWORD
+AMLDAPUSERPASSWD=$OPENAM_AMLDAPUSER_PASSWORD
 ACCEPT_LICENSES=true
 DATA_STORE=dirServer
 DIRECTORY_SSL=SIMPLE
@@ -98,7 +127,7 @@ fi
 if [ -x "$ADM/openam/bin/ssoadm" ]; then
   echo "skip: ssoadm already set up"
 else
-  step "ssoadm setup" sh -c "cd $ADM && ./setup --acceptLicense --path $ADM/openam --debugpath $ADM/debug"
+  step "ssoadm setup" sh -c "cd $ADM && ./setup --acceptLicense --path $ADM/openam --debug $ADM/debug --log $ADM/log"
 fi
 SSOADM="$ADM/openam/bin/ssoadm"
 [ -x "$SSOADM" ] || { echo "FAILED: ssoadm missing after setup"; exit 1; }
@@ -137,6 +166,10 @@ step "self-service password reset" $SSOADM set-attr-defs -s selfService -t organ
 
 # OpenAM's mail service has no STARTTLS -- sslState is SSL or Non SSL only -- so
 # this is Resend on 465, not 587.
+if [ -z "${SMTP_PASSWORD:-}" ]; then
+  echo "SKIPPED: mail server -- SMTP_PASSWORD is empty, so self-service reset cannot send mail."
+  echo "         Set it in the stack environment and redeploy; the phase is idempotent."
+else
 step "mail server" $SSOADM set-attr-defs -s MailServer -t organization $ADMOPTS \
   -a forgerockEmailServiceSMTPHostName="$SMTP_HOST" \
      forgerockEmailServiceSMTPHostPort="$SMTP_PORT" \
@@ -145,6 +178,7 @@ step "mail server" $SSOADM set-attr-defs -s MailServer -t organization $ADMOPTS 
      forgerockEmailServiceSMTPSSLEnabled=SSL \
      forgerockEmailServiceSMTPFromAddress="$SMTP_FROM" \
      forgerockEmailServiceSMTPSubject="Set your password"
+fi
 
 # ------------------------------------------------------------- 6. the accounts
 # Created without a password on purpose: people set their own from the mail the

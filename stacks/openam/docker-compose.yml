@@ -85,6 +85,7 @@ services:
                  opendj_kba opendj_oathdevices opendj_pushdevices; do
           cp "$$SRC/$$f.ldif" /ldif/ && echo "exported $$f.ldif"
         done
+        touch /ldif/.export-done
     volumes:
       - openam-ldif:/ldif
     networks:
@@ -129,6 +130,7 @@ services:
     environment:
       OPENAM_URL: https://${DOMAIN:?DOMAIN not set}/openam
       OPENAM_ADMIN_PASSWORD: ${OPENAM_ADMIN_PASSWORD:?OPENAM_ADMIN_PASSWORD not set}
+      OPENAM_AMLDAPUSER_PASSWORD: ${OPENAM_AMLDAPUSER_PASSWORD:?OPENAM_AMLDAPUSER_PASSWORD not set}
       DIRECTORY_PASSWORD: ${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}
       BASE_DN: ${CONFIG_BASE_DN:-dc=openam,dc=example,dc=org}
       DIRECTORY_SERVER: opendj

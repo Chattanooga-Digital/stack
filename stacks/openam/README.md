@@ -268,6 +268,29 @@ rebuild from source is not one we can responsibly operate, so making the rebuild
 work is *part of evaluating it* rather than a chore beside it. The section above
 exists so that rebuild is faithful.
 
+🔴 **The rebuild is blocked on something the scripts cannot solve, and they say so
+first.** The OpenAM image ships the WAR and nothing else — no `ssoadm`, no
+configurator jar, and no LDAP client at all. `ssoconfiguratortools/` and
+`ssoadmintools/` on the live volume were downloaded and unpacked by hand on
+2026-09-18. Upstream publishes them per release as `SSOConfiguratorTools-<ver>.zip`
+(**4 MB**) and `SSOAdminTools-<ver>.zip` (**155 MB**). The conventions forbid
+fetching code at deploy time, a Swarm config caps at 500 KB, and 155 MB does not
+belong in git. So on a fresh volume `post-install.sh` exits at its first check with
+the reason, rather than twenty lines later with `Invalid Suffix`.
+
+Three ways to close it, none of which is a script change:
+
+1. **A derived image** with both tool sets baked in. Correct, and needs a build
+   and a registry this repo does not have.
+2. **REST instead of the tools.** The 4 MB configurator is only an HTTP client for
+   `/openam/config/`, and 16.x exposes most of `ssoadm` over `/json/`. The one known
+   gap — setting the realm's auth-chain config — was measured on **15.0.3** and
+   should be re-tested on 16.1.3 before it is assumed.
+3. **Vendor only the 4 MB configurator** and use REST for the rest.
+
+It is also a finding about the candidate: Keycloak, Authentik and Zitadel each
+ship as one image that administers itself.
+
 A rebuild needs, in order: `OPENAM_ADMIN_PASSWORD` added to the stack environment
 and both `.env.example` files; the configurator run from that variable; the five
 accounts created; the chain and realm settings above applied with `ssoadm`; the

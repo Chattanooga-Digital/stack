@@ -47,6 +47,11 @@ else
     -D "cn=Directory Manager" -j "$PW" -f /tmp/base.ldif
 fi
 
+# The LDIFs arrive from ldif-export, which may still be copying.
+i=0
+while [ ! -f /ldif/.export-done ] && [ "$i" -lt 60 ]; do i=$((i+1)); sleep 5; done
+[ -f /ldif/.export-done ] || { echo "FAILED: ldif-export never finished (no /ldif/.export-done)"; exit 1; }
+
 # ---- Trap 2: OpenAM's user schema
 # Applied every run: ldapmodify on an already-present schema element is a no-op
 # that reports attributeType/objectClass already exists, which is not a failure
@@ -74,5 +79,10 @@ step "force-change-on-reset" /opt/opendj/bin/dsconfig set-password-policy-prop \
   --trustAll --no-prompt --policy-name "Default Password Policy" --set force-change-on-reset:true
 
 echo
-[ "$fail" -eq 0 ] && echo "opendj prep complete." || echo "opendj prep FINISHED WITH FAILURES."
+if [ "$fail" -eq 0 ]; then
+  touch /ldif/.prep-done       # post-install waits on this; only written on success
+  echo "opendj prep complete."
+else
+  echo "opendj prep FINISHED WITH FAILURES -- post-install will not start."
+fi
 exit "$fail"
