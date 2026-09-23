@@ -143,11 +143,19 @@ Self-service recovery therefore does not cover the member most likely to need it
 the one who never finished signing up the first time. That is the product's
 behaviour, not our configuration, and belongs in the scoring.
 
-**The remaining decision: make Zitadel consistent with the other three.** As it
-stands the evaluation is comparing four products on which one has a different
-username convention, which is a confound we introduced. Renaming the five Zitadel
-accounts to short names would remove it, at the cost of changing a login name Rob
-has already learned. Worth deciding deliberately rather than leaving.
+🟢 **Decided 2026-09-23: the Zitadel accounts are NOT being renamed.** It would
+remove a confound we introduced, and it would also change the login name of people
+who are part-way through evaluating, for our tidiness rather than their benefit.
+The inconsistency stays for the duration and is recorded here instead: email
+address on Zitadel, short name on the other three.
+
+🔴 **And the general rule it comes from: no evaluation system changes underneath
+the evaluators without 24 hours' notice in the IAM Evaluation Talk room.** That
+covers the OpenAM rebuild above, which destroys the five accounts and the realm
+chain. People are mid-evaluation; a system that changes without warning wastes
+their work and the trust that got them to do it. The notice period is also when
+anyone holding un-written-down OpenAM findings should write them into the
+Operations collective, and anyone part-way through can say so and hold it.
 
 Paid tier: Authentik ships an `authentik/enterprise/` directory under a separate
 EE licence (present at tag 2026.8.3). Which features sit behind it, and whether
