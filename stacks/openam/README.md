@@ -327,8 +327,12 @@ mail service's own subject.
 
 **Accounts** — five entries under `ou=people,<basedn>`: `glaudeman`, `azahorscak`,
 `turtlewolfe`, `raitchison`, `wroush`, all `inetUserStatus: Active`, each carrying
-`mail`, `givenName`, `sn` and `cn`, no group membership and no delegation privilege.
-`ou=groups` exists and is empty. *(The first version of this line named only the uids
+`mail`, `givenName`, `sn` and `cn`. Since 2026-10-03 all five are members of the
+group `co-op-admins` in the top realm, which holds the `RealmAdmin` privilege, so each
+can administer OpenAM the way the same five administer Keycloak, Authentik and
+Zitadel (`post-install` phase 8; `OPENAM_ADMINS` narrows the list, `OPENAM_ADMIN_GROUP`
+renames the group). Before that they had no group and no privilege, and only `amadmin`
+could administer the instance. *(The first version of this line named only the uids
 and status, and the post-install written from it created accounts with no address to
 send a reset link to. Re-measured from the directory backup the same day.)*
 

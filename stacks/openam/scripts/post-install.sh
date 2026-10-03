@@ -264,8 +264,8 @@ fi
 # is also its code for every other failure. list-identities answers rc 0 either way
 # and says which in its output, measured against the live instance:
 #   present -> "<uid> (id=<uid>,ou=user,<basedn>)"      absent -> "There were no entries."
-identity_state() {
-  _out=$(adm list-identities -e / -x "$1" -t User 2>&1) || { echo error; return 0; }
+identity_state() {          # $1 name, $2 type (default User; phase 8 asks about a Group)
+  _out=$(adm list-identities -e / -x "$1" -t "${2:-User}" 2>&1) || { echo error; return 0; }
   if printf '%s\n' "$_out" | grep -q "^$1 (id=$1,"; then echo exists
   elif printf '%s\n' "$_out" | grep -q 'There were no entries'; then echo absent
   else echo error; fi
@@ -341,6 +341,50 @@ case "$(identity_state demo)" in
     [ "$(identity_state demo)" = absent ] || { echo "FAILED: demo still present after delete"; fail=1; } ;;
   *) echo "FAILED: could not tell whether the demo account exists"; fail=1 ;;
 esac
+
+# ------------------------------------------------------- 8. who can administer it
+# William reported his account could not administer OpenAM (Deck "Fix Permissions On
+# Staging IAM Systems"). On 2026-09-22/23 Keycloak, Authentik and Zitadel each got a
+# co-op admin group holding all five evaluators; this is OpenAM's half. Until now the
+# accounts above had no group and no privilege, so only amadmin could administer it.
+#
+# OpenAM delegates administration through PRIVILEGES granted to a GROUP, so: one group
+# in the top realm, the evaluators as members, RealmAdmin on the group. Every step
+# checks first and reads back after; a redeploy changes nothing. A check that cannot
+# tell (the "error" answer) fails the phase rather than guessing.
+ADMIN_GROUP="${OPENAM_ADMIN_GROUP:-co-op-admins}"
+# Members: OPENAM_ADMINS if set (space separated), else every uid in OPENAM_USERS.
+admins="${OPENAM_ADMINS:-$(printf '%s' "${OPENAM_USERS:-}" | tr ';' '\n' \
+  | sed 's/^[[:space:]]*//' | cut -d, -f1 | grep -E '^[a-z0-9._-]+$' | tr '\n' ' ')}"
+
+case "$(identity_state "$ADMIN_GROUP" Group)" in
+  exists) echo "skip: group $ADMIN_GROUP exists" ;;
+  absent)
+    step "create group $ADMIN_GROUP" adm create-identity -e / -i "$ADMIN_GROUP" -t Group
+    [ "$(identity_state "$ADMIN_GROUP" Group)" = exists ] \
+      || { echo "FAILED: group $ADMIN_GROUP does not read back after create"; fail=1; } ;;
+  *) echo "FAILED: could not tell whether group $ADMIN_GROUP exists"; fail=1 ;;
+esac
+
+if [ "$(identity_state "$ADMIN_GROUP" Group)" = exists ]; then
+  for u in $admins; do
+    [ "$(identity_state "$u")" = exists ] || { echo "FAILED: admin $u is not an account here -- not added"; fail=1; continue; }
+    if adm show-members -e / -i "$ADMIN_GROUP" -t Group -m User 2>&1 | grep -q "^$u (id=$u,"; then
+      echo "skip: $u already in $ADMIN_GROUP"
+    else
+      step "add $u to $ADMIN_GROUP" adm add-member -e / -i "$ADMIN_GROUP" -t Group -m "$u" -y User
+      adm show-members -e / -i "$ADMIN_GROUP" -t Group -m User 2>&1 | grep -q "^$u (id=$u," \
+        || { echo "FAILED: $u is not a member of $ADMIN_GROUP after adding"; fail=1; }
+    fi
+  done
+  if adm show-privileges -e / -i "$ADMIN_GROUP" -t Group 2>&1 | grep -qw RealmAdmin; then
+    echo "skip: $ADMIN_GROUP already holds RealmAdmin"
+  else
+    step "grant RealmAdmin to $ADMIN_GROUP" adm add-privileges -e / -i "$ADMIN_GROUP" -t Group -g RealmAdmin
+    adm show-privileges -e / -i "$ADMIN_GROUP" -t Group 2>&1 | grep -qw RealmAdmin \
+      || { echo "FAILED: $ADMIN_GROUP does not show RealmAdmin after granting"; fail=1; }
+  fi
+fi
 
 # Note: force-change-on-reset lives in opendj-prep.sh, because dsconfig ships in
 # the OpenDJ image and not this one.
