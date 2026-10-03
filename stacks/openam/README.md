@@ -375,6 +375,15 @@ The first from-zero runs found these, each now handled in the scripts:
 | `ssoadm show-identity` does not exist, so every account read as absent | `identity_state`: `list-identities`, three answers |
 | The configurator's `demo` account, Active, password `changeit` — it logged in | `post-install` deletes it |
 
+**It must survive a restart, and until 2026-10-03 it did not.** The compose file's
+`CATALINA_OPTS` replaced the image's value and dropped the two flags that point OpenAM
+at `/usr/openam/config` for its bootstrap, so the configurator wrote that pointer into
+the container's home directory instead. Every container recreation lost it. The first
+one, on 2026-10-01, left OpenAM serving the first-time setup wizard at its public URL
+(`@BASE_DIR@/serverconfig.xml (No such file or directory)` in the log) while `boot.json`
+sat intact on the volume. The flags are back beside the heap settings; a restart now
+reads the same configuration it wrote.
+
 **To rebuild again:** scale the stack's services to zero; remove the *exited* task
 containers (they pin the volumes, and `DELETE /volumes` answers 409 otherwise); delete
 `openam-config`, `openam-home` and `openam-ldif`; redeploy. `dj-prep` then

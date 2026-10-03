@@ -36,7 +36,18 @@ services:
       # the console lives at https://<domain>/openam and a bare root request
       # returns a Tomcat 404. The path comes from the image's OPENAM_PATH
       # (default "openam"); it is NOT /auth, which is Keycloak's.
-      CATALINA_OPTS: -Xms${JVM_HEAP_MIN:-512m} -Xmx${JVM_HEAP_MAX:-1g}
+      #
+      # CATALINA_OPTS REPLACES the image's own value, which is
+      #   -server -Dcom.iplanet.services.configpath=/usr/openam/config
+      #           -Dcom.sun.identity.configuration.directory=/usr/openam/config
+      # Those two flags are where OpenAM looks for its bootstrap. From 2026-09-17
+      # until 2026-10-03 this line carried only the heap flags, so OpenAM wrote its
+      # bootstrap pointer into the openam user's home inside the container, which no
+      # volume keeps. It worked until the container was recreated on 2026-10-01 (the
+      # staging restart); after that it served the first-time setup wizard to the
+      # public URL, "@BASE_DIR@/serverconfig.xml (No such file or directory)", with
+      # boot.json intact on the volume the whole time. Keep the flags with the heap.
+      CATALINA_OPTS: -server -Xms${JVM_HEAP_MIN:-512m} -Xmx${JVM_HEAP_MAX:-1g} -Dcom.iplanet.services.configpath=/usr/openam/config -Dcom.sun.identity.configuration.directory=/usr/openam/config
       TZ: ${TZ:-America/New_York}
     volumes:
       - openam-home:/usr/openam
