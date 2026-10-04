@@ -6,12 +6,8 @@ services:
       POSTGRES_USER: ${DB_USER:-keycloak}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
     volumes:
-      # postgres:18 takes the volume ONE LEVEL UP from 17 and earlier. Mounting
-      # /var/lib/postgresql/data against 18 makes it refuse to start, printing
-      # pg_upgrade advice rather than an obvious error. docker-library/postgres#37.
-      # The nextcloud stack in this repo already carries this note; this stack
-      # repeated the mistake and it was caught by deploying to staging 2026-09-18.
-      # If you pin KEYCLOAK_DB_VERSION below 18, this path must go back to /data.
+      # postgres:18 mounts one level up from 17. The old path refuses to start
+      # with pg_upgrade advice. Below 18 this must be /var/lib/postgresql/data.
       - keycloak-db:/var/lib/postgresql
     networks:
       - keycloak_internal
@@ -21,7 +17,7 @@ services:
         constraints:
           - node.role == manager
       update_config:
-        order: stop-first          # stateful: never two writers on one volume
+        order: stop-first
       restart_policy:
         condition: any
       resources:
@@ -30,12 +26,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:?KEYCLOAK_VERSION not set}
-    # NOT `start --optimized`. That flag asserts a build step has already run,
-    # and on a virgin database none has, so Keycloak 26 refuses to start and the
-    # task crash-loops on exit 2 with:
-    #   "The '--optimized' flag was used for first ever server start."
-    # Measured on staging 2026-09-18. `start` performs the build itself when it
-    # needs to, which costs a slower first boot and nothing after that.
+    # Not `start --optimized`: it exits 2 on a database that has never started.
     command: ["start"]
     environment:
       KC_DB: postgres
@@ -44,14 +35,12 @@ services:
       KC_DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
       KC_HOSTNAME: https://${DOMAIN:?DOMAIN not set}
       KC_HTTP_ENABLED: "true"
-      KC_PROXY_HEADERS: xforwarded        # Traefik terminates TLS
+      KC_PROXY_HEADERS: xforwarded
       KC_HEALTH_ENABLED: "true"
-      # Seeds the first admin on an EMPTY database only. Changing it later does
-      # nothing; use the console. Keycloak 26 renamed these from KEYCLOAK_ADMIN.
+      # 26 renamed these from KEYCLOAK_ADMIN; the old names are ignored silently.
       KC_BOOTSTRAP_ADMIN_USERNAME: ${ADMIN_USER:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
-      # Cap the heap explicitly. Left alone the JVM sizes itself against the
-      # HOST's RAM, not the container limit, and this node is over-committed.
+      # The JVM sizes itself against host RAM, not the container limit.
       JAVA_OPTS_KC_HEAP: -Xms${JVM_HEAP_MIN:-256m} -Xmx${JVM_HEAP_MAX:-1g}
       TZ: ${TZ:-America/New_York}
     networks:
@@ -81,10 +70,6 @@ services:
 networks:
   traefik_net:
     external: true
-  # Owned by this stack rather than expected from the cluster. The shared
-  # network exists on production but NOT on staging, so declaring it external
-  # means the stack cannot start there - and staging is where this gets
-  # evaluated. Every other stack on both clusters owns its own the same way.
   keycloak_internal: {}
 
 volumes:
