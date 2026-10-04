@@ -1,15 +1,7 @@
 #!/bin/sh
-# Gancio is configured by a JSON file, not by environment variables.
-#
-# server/config.js reads `-c/--config` (default /config.json) and, when the file
-# is absent, sets status=SETUP and serves a first-run web wizard instead of the
-# site. A stack that mounted no config would therefore come up "healthy" showing
-# a setup screen to the public, so the file is rendered here from the stack
-# environment and the compose file stays instance-agnostic per CONVENTIONS.md.
-#
-# Paths in config.example.json are relative to the process working directory.
-# They are absolute here so a working-directory change upstream cannot silently
-# relocate uploads onto the container filesystem, where a redeploy loses them.
+# Without /config.json gancio serves a first-run setup wizard instead of the site,
+# so the file is rendered here from the environment.
+# Paths are absolute so uploads stay on the volume.
 set -eu
 
 DATA=/data
@@ -18,23 +10,8 @@ mkdir -p "$DATA/uploads" "$DATA/logs" "$DATA/user_locale"
 : "${GANCIO_BASEURL:?GANCIO_BASEURL not set}"
 : "${DB_PASSWORD:?DB_PASSWORD not set}"
 
-# MAIL IS NOT SEEDED FROM HERE. It is set in Administration > Settings, which is
-# gancio's supported place for it, and this file deliberately does not pre-empt
-# that. An earlier version wrote `admin_email` and `smtp` into the config so a
-# rebuild from empty volumes came back with mail on; that is the cost of the
-# rule, and the cost is accepted rather than worked around.
-#
-# The consequence to know: a fresh volume comes up with mail off, so password
-# resets and confirmations silently do nothing until someone fills the panel in.
-
-# Everything interpolated below lands inside a JSON document. A quote or a
-# backslash in any of it produces a file gancio can only report as a parse error,
-# against a path nobody can read. Fail here, with the reason, instead.
-#
-# This check used to cover only the SMTP values and went away with them. The
-# password is the one that actually matters -- it is arbitrary, it is the value
-# most likely to contain punctuation, and Portainer is documented as mangling
-# `%`, `*` and `$` in env values already.
+# Values land inside a JSON document; a quote or backslash would surface as a
+# parse error against an unreadable file.
 case "${DB_PASSWORD}${GANCIO_BASEURL}${DB_USER:-}${DB_NAME:-}" in
   *'"'*|*\\*)
     echo "FATAL: DB_PASSWORD/GANCIO_BASEURL/DB_USER/DB_NAME cannot contain a quote or backslash" >&2
@@ -64,8 +41,7 @@ cat > /config.json <<JSON
 }
 JSON
 
-# Postgres accepts TCP before it accepts queries, so a plain port check races the
-# first migration. Ask the database a question instead.
+# Postgres accepts TCP before it accepts queries, so probe with a query.
 i=0
 until node -e '
 const{Client}=require("/home/node/node_modules/pg");
