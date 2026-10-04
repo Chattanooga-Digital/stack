@@ -1,18 +1,13 @@
 #!/bin/sh
-# Everything the OpenDJ user store needs BEFORE the OpenAM configurator will run.
+# Prepares the OpenDJ user store before the OpenAM configurator runs.
 #
-# Both of these are documented in ../README.md as Trap 1 and Trap 2, and both
-# were done by hand on 2026-09-18, which is why a rebuild would not have
-# reproduced the instance Rob and William evaluated.
+# Base entry: this image advertises the suffix without creating it, and the
+# configurator reports "Invalid Suffix".
+# Schema: an external user store needs OpenAM's schema, or the configurator fails on
+# its last step with a bare "error code :500" (unknown objectclass, in debug/IdRepo).
 #
-# Trap 1: this OpenDJ image advertises the suffix as a naming context but never
-#         creates the base entry. The configurator calls that "Invalid Suffix".
-# Trap 2: an external user store needs OpenAM's own schema loaded into it, or the
-#         configurator runs to its LAST step and fails with a bare "error code :500";
-#         the real message is an unknown objectclass, in a debug log nobody reads.
-#
-# The LDIF files live in the OpenAM image (inside its WAR), the LDAP tools live in
-# this one. They are vendored in ../schema/ and mounted here as Swarm configs.
+# The LDIF files are in the OpenAM image's WAR and the LDAP tools in this one, so the
+# files are vendored in ../schema/ and mounted as Swarm configs.
 set -u
 : "${DIRECTORY_PASSWORD:?DIRECTORY_PASSWORD not set}"
 : "${BASE_DN:=dc=openam,dc=example,dc=org}"
@@ -37,7 +32,6 @@ done
 [ "$i" -ge 60 ] && { echo "FAILED: OpenDJ never answered"; exit 1; }
 echo "ok: OpenDJ is answering"
 
-# ---- Trap 1: the base entry
 if /opt/opendj/bin/ldapsearch -h opendj -p 1389 -D "cn=Directory Manager" -j "$PW" \
      -b "$BASE_DN" -s base "(objectClass=*)" dn >/dev/null 2>&1; then
   echo "skip: base entry exists"
@@ -47,22 +41,17 @@ else
     -D "cn=Directory Manager" -j "$PW" -f /tmp/base.ldif
 fi
 
-# LDIF folds long lines: a line starting with ONE space continues the previous one
-# (RFC 2849), joined with no separator.
+# A line starting with one space continues the previous one (RFC 2849).
 unfold() { awk '/^ / && NR > 1 { buf = buf substr($0, 2); next }
                 NR > 1 { print buf }
                 { buf = $0 }
                 END { if (NR) print buf }'; }
-# ---- Trap 1b: ou=people, ou=groups, and the self-modification deny ACI
-# The configurator writes its demo user into ou=people and never creates it: without
-# it, it runs to "Creating demo user" and fails with a bare "error code :500" (only
-# debug/IdRepo says the parent entry does not exist). OpenAM ships the fix as
-# opendj_userinit.ldif -- both containers PLUS an ACI on the suffix denying users
-# write access to their own inetuserstatus, ds-pwp-account-disabled, memberof and
-# the rest. The 09-18 directory has all three. 803a7b1 hand-wrote the two OUs
-# instead and so dropped the ACI, which ../README.md (Trap 2) had warned against.
-# Now: the vendor's file, token substituted, and the END STATE checked -- -c lets a
-# re-run carry on past "already exists", so the exit status cannot be the test.
+
+# The configurator writes its demo user into ou=people and never creates it, then
+# fails with a bare "error code :500". OpenAM's opendj_userinit.ldif creates
+# ou=people and ou=groups plus an ACI that denies users write access to their own
+# status attributes; hand-written OUs would drop the ACI.
+# -c carries on past "already exists", so the end state is checked, not the exit status.
 UI=/schema/opendj_userinit.ldif
 if [ ! -f "$UI" ]; then
   echo "MISSING: $UI (config not mounted?)"; fail=1
@@ -89,9 +78,8 @@ else
   fi
 fi
 
-# The schema is vendored per OpenAM version and arrives as Swarm configs under
-# /schema. Loading one version's schema under another's OpenAM is the drift this
-# stops: fail loudly, with the fix, rather than half-work.
+# The schema is vendored per OpenAM version and mounted under /schema. Fail rather
+# than load one version's schema under another's OpenAM.
 : "${OPENAM_VERSION:?OPENAM_VERSION not set}"
 have=$(tr -d '[:space:]' < /schema/VERSION 2>/dev/null)
 if [ "$have" != "$OPENAM_VERSION" ]; then
@@ -101,19 +89,12 @@ if [ "$have" != "$OPENAM_VERSION" ]; then
 fi
 echo "ok: vendored schema matches OPENAM_VERSION ($have)"
 
-# ---- Trap 2: OpenAM's user schema, RECONCILED per definition
-# Each file is ONE modify on cn=schema adding many definitions, and the server
-# applies it atomically: if any single value already exists the whole modify is
-# refused with "20 (Attribute or Value Exists)". So re-sending a file can never
-# work on a directory that has it -- which is every deploy after the first -- and
-# it would also block a later OpenAM version that adds ONE new definition to a
-# file whose others are present. (Until 2026-09-23 this matched "already exists",
-# a message OpenDJ never prints; the second rebuild failed every file on it.)
-#
-# So: unfold the LDIF, compare each definition to the live schema BY OID, send only
-# the missing ones, then read back and require every OID present. A definition
-# CHANGED under an existing OID is not reconciled -- that needs the exact old value
-# deleted -- and is not something any OpenAM release so far has done.
+# Each file is one modify on cn=schema, applied atomically: if any value already
+# exists the whole modify fails with "20 (Attribute or Value Exists)". A file cannot
+# be re-sent, and a release that adds one definition to an existing file would be
+# blocked. Compare definitions to the live schema by OID, send only the missing ones,
+# then read back and require every OID. A definition changed under an existing OID is
+# not reconciled.
 #
 # "at:<oid>" / "oc:<oid>" for every definition line on stdin (already unfolded).
 oids() { awk '{ k = tolower(substr($0, 1, index($0, ":") - 1))
@@ -167,19 +148,12 @@ for f in opendj_user_schema.ldif opendj_dashboard.ldif opendj_deviceprint.ldif \
 done
 rm -f "$HAVE" "$WANT" "$ADD"
 
-# ---- force a change on a password WE set
-# Also causes OpenAM to demand a SECOND change after a self-service reset, because
-# OpenAM sets that password by binding as the administrator and the directory
-# cannot tell that apart from a real admin reset. Keycloak and Zitadel can. That
-# is a finding about OpenAM, not a misconfiguration; see ../README.md.
+# Forces a change on every password an administrator sets. OpenAM then demands a
+# second change after a self-service reset: it sets that password by binding as the
+# administrator, and the directory cannot tell that from an admin reset.
 #
-# ldapmodify on cn=config, NOT dsconfig. dsconfig is only an LDAP client that sends
-# this same modify to cn=config, and the server validates it the same way -- but it
-# first checks the version of a LOCAL installation, and this container has none:
-# run.sh never ran here, so there is no instance.loc and no config/buildinfo.
-# Measured on the first fresh 16.1.3 rebuild: "The version of the installed OpenDJ
-# could not be determined because the version file '/opt/opendj/config/buildinfo'
-# could not be found". It had never run on a fresh stack before; 09-18 did it by hand.
+# ldapmodify on cn=config instead of dsconfig, which checks the version of a local
+# installation (config/buildinfo) that this container does not have.
 POLICY="cn=Default Password Policy,cn=Password Policies,cn=config"
 printf 'dn: %s\nchangetype: modify\nreplace: ds-cfg-force-change-on-reset\nds-cfg-force-change-on-reset: true\n' \
   "$POLICY" > /tmp/policy.ldif

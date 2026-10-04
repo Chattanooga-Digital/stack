@@ -1,11 +1,6 @@
 services:
-  # OpenAM keeps its configuration in an LDAP directory rather than a SQL
-  # database. OpenDJ is the platform's own, and the pairing is what upstream
-  # documents; the embedded alternative puts config inside the app container,
-  # which does not survive a redeploy.
-  # This image advertises BASE_DN as a naming context without ever creating
-  # the base entry, and it carries none of OpenAM's user schema. Both have to
-  # be loaded before the configurator will complete - see the README.
+  # This image advertises BASE_DN as a naming context without creating the base
+  # entry, and carries none of OpenAM's user schema. dj-prep adds both.
   opendj:
     image: openidentityplatform/opendj:${OPENDJ_VERSION:-5.1.2}
     environment:
@@ -32,21 +27,9 @@ services:
   openam:
     image: openidentityplatform/openam:${OPENAM_VERSION:?OPENAM_VERSION not set}
     environment:
-      # OpenAM is served from a Tomcat context path, NOT the domain root, so
-      # the console lives at https://<domain>/openam and a bare root request
-      # returns a Tomcat 404. The path comes from the image's OPENAM_PATH
-      # (default "openam"); it is NOT /auth, which is Keycloak's.
-      #
-      # CATALINA_OPTS REPLACES the image's own value, which is
-      #   -server -Dcom.iplanet.services.configpath=/usr/openam/config
-      #           -Dcom.sun.identity.configuration.directory=/usr/openam/config
-      # Those two flags are where OpenAM looks for its bootstrap. From 2026-09-17
-      # until 2026-10-03 this line carried only the heap flags, so OpenAM wrote its
-      # bootstrap pointer into the openam user's home inside the container, which no
-      # volume keeps. It worked until the container was recreated on 2026-10-01 (the
-      # staging restart); after that it served the first-time setup wizard to the
-      # public URL, "@BASE_DIR@/serverconfig.xml (No such file or directory)", with
-      # boot.json intact on the volume the whole time. Keep the flags with the heap.
+      # Replaces the image's CATALINA_OPTS, so the two config-path flags stay. Without
+      # them OpenAM keeps its bootstrap pointer inside the container, and a recreate
+      # serves the first-time setup wizard.
       CATALINA_OPTS: -server -Xms${JVM_HEAP_MIN:-512m} -Xmx${JVM_HEAP_MAX:-1g} -Dcom.iplanet.services.configpath=/usr/openam/config -Dcom.sun.identity.configuration.directory=/usr/openam/config
       TZ: ${TZ:-America/New_York}
     volumes:
@@ -75,25 +58,13 @@ services:
         limits:
           memory: ${MEM_LIMIT_OPENAM:-1500M}
 
-  # ---------------------------------------------------------------- one-shots
-  # Everything below replaces work that was done by hand on 2026-09-18 and
-  # therefore did not survive into the repository. A fresh deploy without these
-  # comes up with the stock DataStore chain, no self-service, no mail and no
-  # accounts - a different system from the one being evaluated.
-
-  # OpenAM's schema LDIFs are vendored in ./schema/, extracted byte-identical from
-  # the WAR in the deployed image (see ../README.md for how, and why not at deploy
-  # time: neither image carries unzip, jar or python, and a volume over Tomcat's
-  # webapps would keep serving an old WAR after an upgrade). dj-prep refuses to
-  # run if schema/VERSION differs from OPENAM_VERSION.
-  #
-  # Runs as root: it writes its completion marker onto a fresh, root-owned volume.
-  # healthcheck disabled: both images declare a HEALTHCHECK for a server this
-  # one-shot never starts, and Swarm KILLED the first run as "unhealthy" (exit 137).
   dj-prep:
     image: openidentityplatform/opendj:${OPENDJ_VERSION:-5.1.2}
+    # Root, to write its completion marker onto a fresh, root-owned volume.
     user: "0"
     entrypoint: ["/bin/sh", "/opendj-prep.sh"]
+    # Both images declare a healthcheck for a server a one-shot never starts, and Swarm
+    # kills the task as unhealthy (exit 137).
     healthcheck:
       disable: true
     configs:
@@ -166,23 +137,17 @@ services:
 networks:
   traefik_net:
     external: true
-  # Owned by this stack rather than expected from the cluster. The shared
-  # network exists on production but NOT on staging, so declaring it external
-  # means the stack cannot start there - and staging is where this gets
-  # evaluated. Every other stack on both clusters owns its own the same way.
   openam_internal: {}
 
 configs:
-  # Swarm configs are IMMUTABLE. Bump the name when the script changes, or the
-  # redeploy fails with a config-already-exists error that names nothing useful.
+  # Swarm configs are immutable. Bump the name when the script changes.
   opendj_prep_sh:
-    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_6}
+    name: ${OPENDJ_PREP_CONFIG_NAME:-openam_djprep_7}
     file: ./scripts/opendj-prep.sh
   openam_post_install_sh:
-    name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_10}
+    name: ${POST_INSTALL_CONFIG_NAME:-openam_postinstall_11}
     file: ./scripts/post-install.sh
-  # Content is bound to the OpenAM version, so the version is in the name: an
-  # upgrade brings new files AND new config names, never a clash with the old.
+  # Named per OpenAM version; rename with the files on an upgrade.
   openam_schema_version:     {name: openam_schema_16_1_3_version,     file: ./schema/VERSION}
   openam_schema_user:        {name: openam_schema_16_1_3_user,        file: ./schema/opendj_user_schema.ldif}
   openam_schema_dashboard:   {name: openam_schema_16_1_3_dashboard,   file: ./schema/opendj_dashboard.ldif}
