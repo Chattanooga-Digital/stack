@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """Decide whether a configuration value is a placeholder rather than a setting.
 
-`${VAR:?}` in a compose file only catches a variable that is UNSET or EMPTY. It
-cannot tell smtp.resend.com from smtp.invalid, so a placeholder satisfies every
-check this repo has and then fails silently forever -- which is exactly how all
-four IAM stacks shipped unable to send mail while reporting healthy.
+`${VAR:?}` only rejects an unset or empty variable, so smtp.invalid passes it.
 
-Shared by validate.sh (against .env.example) and check-deployed.sh (against a
-live stack environment).
+Used by validate.sh against .env.example and by check-deployed.sh against a live
+stack environment.
 """
 import re
 import sys
 
-# RFC 2606 / RFC 6761 reserve these precisely so they can never resolve. Any of
-# them in a hostname or an email domain is a placeholder by definition.
+# Reserved by RFC 2606 and RFC 6761, so they never resolve.
 RESERVED_SUFFIX = re.compile(
     r"(^|[@.])(?:invalid|example|test|localdomain)$"
     r"|(^|[@.])example\.(?:com|net|org)$"
@@ -21,8 +17,7 @@ RESERVED_SUFFIX = re.compile(
     re.I,
 )
 
-# Whole-value only. Substring matching would reject a perfectly good password
-# that happens to contain "none".
+# Whole-value only, so a password containing "none" is not rejected.
 PLACEHOLDER_WORDS = {
     "changeme", "change-me", "change_me", "placeholder", "unused", "unset",
     "todo", "tbd", "xxx", "xxxx", "dummy", "fixme", "notset", "none", "null",
@@ -44,7 +39,6 @@ def reason(value):
         return "unfilled template"
     if v.lower() in PLACEHOLDER_WORDS:
         return "placeholder word"
-    # check the host part of a URL or an email address too
     candidates = [v]
     m = re.match(r"^[a-z][a-z0-9+.-]*://([^/?#]+)", v, re.I)
     if m:

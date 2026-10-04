@@ -60,9 +60,7 @@ for stack in "${targets[@]}"; do
     continue
   fi
 
-  # ${VAR:?} only catches UNSET or EMPTY. It cannot tell smtp.resend.com from
-  # smtp.invalid, so a placeholder passes every check above and then fails
-  # silently in production. Reject the ones this repo would be documenting.
+  # ${VAR:?} cannot tell smtp.resend.com from smtp.invalid.
   bad=$(python3 scripts/placeholders.py < "$example")
   if [ -n "$bad" ]; then
     echo "FAIL $stack: .env.example documents placeholder values:"

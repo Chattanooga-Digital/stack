@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
-# Checks the environment of DEPLOYED stacks for placeholder values.
-#
-# validate.sh can only see what the repo ships. The failure this exists to catch
-# happened at deploy time: four stacks were given SMTP_HOST=smtp.invalid in the
-# Portainer UI, which satisfies ${SMTP_HOST:?} and guarantees silence. Nothing in
-# the repo could see it, and nothing errored -- the stacks reported healthy while
-# every account-handover email went nowhere.
+# Checks the environment of deployed stacks for placeholder values, which
+# validate.sh cannot see.
 #
 # Needs PORTAINER_URL, PORTAINER_USER, PORTAINER_PASSWORD. Takes stack names as
-# arguments, or checks all of them.
-#
-# Values are only ever echoed for variables that are not credential-shaped; the
-# rest report the reason alone.
+# arguments, or checks all of them. Credential-shaped values are never echoed.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
