@@ -60,6 +60,15 @@ for stack in "${targets[@]}"; do
     continue
   fi
 
+  # ${VAR:?} cannot tell smtp.resend.com from smtp.invalid.
+  bad=$(python3 scripts/placeholders.py < "$example")
+  if [ -n "$bad" ]; then
+    echo "FAIL $stack: .env.example documents placeholder values:"
+    echo "$bad" | sed 's/^/       /'
+    status=1
+    continue
+  fi
+
   echo "ok   $stack"
 done
 
