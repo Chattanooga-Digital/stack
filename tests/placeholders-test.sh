@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# The canaries must be rejected, or a detector that stopped detecting would read
-# as a clean repo.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,14 +31,13 @@ must_reject 'MAIL=admin@example.org'
 must_reject 'TPL={{ domain }}'
 
 
-# Must pass, or the check gets switched off.
 must_accept 'SMTP_HOST=smtp.resend.com'
 must_accept 'DOMAIN=keycloak.staging.chattanooga.digital'
 must_accept 'MAIL_FROM=no-reply@get.chattanooga.digital'
 must_accept 'DB_PASSWORD=correct-horse-battery-staple'
 must_accept 'SMTP_USER=resend'
 must_accept 'DB_NAME=authentik'
-# empty is already caught by compose's ${VAR:?}; flagging it here would be noise
+# Empty is left to compose's ${VAR:?}.
 must_accept 'SMTP_PASSWORD='
 
 if [ "$fail" = 0 ]; then

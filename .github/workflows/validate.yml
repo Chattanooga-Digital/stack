@@ -10,6 +10,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Runs first: a broken detector reads as a clean repo.
       - run: ./tests/placeholders-test.sh
       - run: ./scripts/validate.sh

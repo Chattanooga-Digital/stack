@@ -11,8 +11,8 @@ import sys
 import urllib.error
 import urllib.request
 
-sys.dont_write_bytecode = True  # no __pycache__ left in the checkout
-from placeholders import describe  # noqa: E402
+sys.dont_write_bytecode = True
+from placeholders import describe
 
 
 def api(url, token=None, body=None):
