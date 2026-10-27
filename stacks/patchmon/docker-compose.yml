@@ -1,0 +1,105 @@
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config:
+    order: stop-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: any
+    delay: 10s
+    max_attempts: 0
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  patchmon_internal:
+    driver: overlay
+    attachable: false
+
+volumes:
+  patchmon_db:
+    driver: local
+  patchmon_redis:
+    driver: local
+
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    environment:
+      POSTGRES_DB: patchmon
+      POSTGRES_USER: patchmon
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+    volumes:
+      - patchmon_db:/var/lib/postgresql/data
+    networks:
+      - patchmon_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U patchmon -d patchmon"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-512M}
+
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD not set}"]
+    environment:
+      # Name has to match the healthcheck's REDIS_PASSWORD, which the shell in
+      # the container expands, not compose.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD not set}
+    volumes:
+      - patchmon_redis:/data
+    networks:
+      - patchmon_internal
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_REDIS:-128M}
+
+  server:
+    image: ghcr.io/patchmon/patchmon-server:${PATCHMON_VERSION:?PATCHMON_VERSION not set}
+    # Agent presence is keyed on hostname, which otherwise changes with every task.
+    hostname: patchmon-server
+    environment:
+      DATABASE_URL: postgresql://patchmon:${DB_PASSWORD}@db:5432/patchmon
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      CORS_ORIGIN: https://${DOMAIN:?DOMAIN not set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET not set}
+      # Encrypts stored credentials and enrollment tokens. Changing it makes them unreadable.
+      AI_ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY not set}
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - patchmon_internal
+      - traefik_net
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_SERVER:-512M}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=3000"

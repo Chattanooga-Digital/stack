@@ -8,9 +8,11 @@ its own image pins. Sharing a repo couples nothing about how fast they move.
 
 | Stack | Service |
 |---|---|
+| [beszel](stacks/beszel) | Host and container monitoring |
 | [bigcapital](stacks/bigcapital) | Accounting |
 | [mastodon](stacks/mastodon) | Fediverse social |
 | [nextcloud](stacks/nextcloud) | Files, Talk, Office, Whiteboard, groupware |
+| [patchmon](stacks/patchmon) | OS package monitoring and patching for the nodes |
 | [track](stacks/track) | Per-stack resource metering |
 | [turn](stacks/turn) | Shared TURN/STUN relay for WebRTC |
 
@@ -18,7 +20,8 @@ Each stack's README covers what is specific to it. Read
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) before adding one, and
 [docs/PORTFOLIO.md](docs/PORTFOLIO.md) for where a platform stands, including the
 ones not deployed from here. [docs/NEEDS.md](docs/NEEDS.md) tracks capabilities
-we want but have not picked a platform for.
+we want but have not picked a platform for. Operating procedures live in
+[docs/sops/](docs/sops).
 
 ## Adding a stack
 

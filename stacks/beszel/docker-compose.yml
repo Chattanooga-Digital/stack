@@ -1,0 +1,87 @@
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  # Host netns so the agent reports the node's interfaces, not its own veth.
+  host:
+    name: host
+    external: true
+
+volumes:
+  beszel_data:
+    driver: local
+  beszel_agent_data:
+    driver: local
+
+services:
+  hub:
+    image: henrygd/beszel:${BESZEL_VERSION:?BESZEL_VERSION not set}
+    environment:
+      APP_URL: https://${DOMAIN:?DOMAIN not set}
+    volumes:
+      - beszel_data:/beszel_data
+    networks:
+      - traefik_net
+    healthcheck:
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: 1
+      update_config:
+        order: stop-first
+        parallelism: 1
+        delay: 5s
+        failure_action: rollback
+        monitor: 60s
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 0
+      placement:
+        constraints:
+          - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_HUB:-256M}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=8090"
+
+  agent:
+    image: henrygd/beszel-agent:${BESZEL_VERSION:?BESZEL_VERSION not set}
+    environment:
+      # On the host network the overlay is unreachable, so agents dial the hub through Traefik.
+      HUB_URL: https://${DOMAIN}
+      KEY: ${AGENT_KEY:-}
+      TOKEN: ${AGENT_TOKEN:-}
+      SYSTEM_NAME: "{{.Node.Hostname}}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - beszel_agent_data:/var/lib/beszel-agent
+    networks: [host]
+    healthcheck:
+      test: ["CMD", "/agent", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      mode: global
+      update_config:
+        order: stop-first
+        failure_action: rollback
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 0
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_AGENT:-64M}
