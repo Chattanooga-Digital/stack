@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | State | Proposed |
-| Repo | **Absent** |
+| Repo | **Ready** [stacks/keycloak](../../stacks/keycloak) |
 | Verdict | EVAL |
 
 ## Notes
