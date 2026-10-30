@@ -1,0 +1,97 @@
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config:
+    order: stop-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: any
+    delay: 10s
+    max_attempts: 0
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  gancio_internal:
+    driver: overlay
+    attachable: false
+
+volumes:
+  gancio_data:
+    driver: local
+  gancio_db:
+    driver: local
+
+configs:
+  gancio_entrypoint:
+    # Bump ENTRYPOINT_VERSION when the script changes; Swarm configs are immutable.
+    name: ${INSTANCE_NAME:?INSTANCE_NAME not set}-gancio-entrypoint-${ENTRYPOINT_VERSION:-4}
+    file: ./scripts/entrypoint.sh
+
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION:-16-alpine}
+    environment:
+      POSTGRES_DB: ${DB_NAME:-gancio}
+      POSTGRES_USER: ${DB_USER:-gancio}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+    volumes:
+      - gancio_db:/var/lib/postgresql/data
+    networks:
+      - gancio_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-512M}
+
+  gancio:
+    image: cisti/gancio:${GANCIO_VERSION:?GANCIO_VERSION not set}
+    # Renders /config.json first; gancio has no env-var configuration.
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      GANCIO_BASEURL: https://${GANCIO_DOMAIN:?GANCIO_DOMAIN not set}
+      GANCIO_LOG_LEVEL: ${GANCIO_LOG_LEVEL:-info}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-gancio}
+      DB_USER: ${DB_USER:-gancio}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+    configs:
+      - source: gancio_entrypoint
+        target: /entrypoint.sh
+        mode: 0555
+    volumes:
+      - gancio_data:/data
+    networks:
+      - traefik_net
+      - gancio_internal
+    depends_on:
+      - db
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_GANCIO:-1G}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.rule=Host(`${GANCIO_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}-web.loadbalancer.server.port=13120"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-upload.buffering.maxRequestBodyBytes=${UPLOAD_MAX_BYTES:-20971520}"
+        - "traefik.http.routers.${INSTANCE_NAME}-web.middlewares=${INSTANCE_NAME}-upload@swarm"
