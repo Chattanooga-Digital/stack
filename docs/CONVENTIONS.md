@@ -78,6 +78,29 @@ checkout, so the deployed ref's script is what runs. Never fetch code from the
 network at deploy time. Config objects are immutable: version the config name
 when the file changes, or the redeploy fails.
 
+## Supported interfaces only
+
+Stacks are infrastructure people depend on, so a service or script configures an
+application only through what upstream supports: environment variables, config
+files, its CLI, or its documented API with its documented auth. nextcloud's
+`init` calling `occ` is an example.
+
+Scraping a login form or nonce, replaying a browser session, and editing the
+application's tables directly are all out, however well they work today.
+
+Every setup script this repo has carried has shipped bugs of its own, because it
+is code we own running against an application's live state. The usual failures:
+
+- It runs again and overwrites what someone changed in the UI.
+- It runs again and repeats something meant to happen once.
+- It reaches a state the application's own UI refuses.
+- It fails quietly: the deploy looks healthy and the feature does not work.
+
+One-time setup is cheaper to do by hand.
+
+Where upstream has no supported route, the step is manual: a person or an agent
+with a browser does it in the admin UI, and the stack README details those steps.
+
 ## Credentials
 
 Credentials are environment variables, set in Portainer's stack environment
@@ -86,9 +109,6 @@ inspect` by anyone who can already reach the Swarm, and the `*_FILE` indirection
 that avoids that costs a shell wrapper on every service and an out-of-band
 `docker secret create` step per credential that Portainer will not do for you.
 Mastodon ran that way once; it was not worth the friction.
-
-Keep passwords and secrets **alphanumeric**. Portainer's UI mangles percent,
-asterisk, and dollar characters in env values.
 
 ## Two dollar-sign traps
 
