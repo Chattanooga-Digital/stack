@@ -18,8 +18,7 @@ Nothing here creates or backs it up.
 values are not rotatable in practice: changing them invalidates sessions and
 makes existing encrypted columns unreadable.
 
-`VAPID_PUBLIC_KEY` is public by design. Both halves are base64url and break the
-alphanumeric rule the other stacks follow, so paste them exactly.
+`VAPID_PUBLIC_KEY` is public by design.
 
 ### Migrating an existing instance
 
