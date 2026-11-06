@@ -10,6 +10,7 @@ its own image pins. Sharing a repo couples nothing about how fast they move.
 |---|---|
 | [beszel](stacks/beszel) | Host and container monitoring |
 | [bigcapital](stacks/bigcapital) | Accounting |
+| [gancio](stacks/gancio) | Shared event calendar |
 | [listmonk](stacks/listmonk) | Newsletters |
 | [mastodon](stacks/mastodon) | Fediverse social |
 | [nextcloud](stacks/nextcloud) | Files, Talk, Office, Whiteboard, groupware |
