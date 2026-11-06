@@ -6,6 +6,10 @@ Gancio reads `/config.json` and serves a first-run setup wizard when it is
 absent. `scripts/entrypoint.sh` renders the file from the stack environment on
 every start, then runs migrations.
 
+There is no setup wizard once `config.json` exists. The first user to register
+on the site becomes an admin, or run `server/cli.js users create <email>
+<password> admin -c /config.json` in the container.
+
 Mail is configured in Administration > Settings. Gancio takes no SMTP
 variables, so a deploy onto empty volumes starts with mail off and password
 resets and submission confirmations fail silently.
